@@ -3,8 +3,7 @@ from argparse import Namespace
 import logging
 import sys
 
-from .conf import (add_root_config, configure_log, CONFIG,
-                   parse_cli, write_default_config)
+from .conf import configure_log, CONFIG, parse_cli, write_default_config
 from . import run
 
 
@@ -14,7 +13,7 @@ def main():
 
     # Load the global configuration file
     try:
-        add_root_config(args.config, args)
+        CONFIG.update_root(args.config, args)
     except Exception:
         if args.silent:
             sys.exit(1)
@@ -32,6 +31,7 @@ def main():
         write_default_config(args.config)
         log.info(f'Saved default configuration to "{args.config}"')
 
+    # Get the appropriate task for the user-selected mode
     if args.mode == 'scan':
         task = run.scan(args.project)
     else:

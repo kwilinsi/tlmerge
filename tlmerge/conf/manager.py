@@ -14,7 +14,7 @@ _yaml.sequence_indent = 4
 _yaml.sequence_dash_offset = 2
 
 
-class ConfigTree:
+class ConfigManager:
     def __init__(self):
         self._root = GlobalConfig()
         self._tree: dict[tuple[str, Optional[str]], Config] = {}
@@ -107,11 +107,41 @@ class ConfigTree:
             self._tree[(date_str, group)] = c2
             return c2
 
+    def update_root(self, file: Path, args: Namespace | None = None) -> None:
+        """
+        Update the root config based on a configuration file (and possibly the
+        command line arguments).
 
-CONFIG: ConfigTree = ConfigTree()
+        If the config file doesn't exist, only the command line arguments are
+        applied. If those aren't given either, nothing happens.
+
+        :param file: The path to the config file.
+        :param args: The command line arguments. Defaults to None.
+        :return: None
+        """
+
+        # Process the config file only if it exists
+        if file.exists():
+            # Load
+            documents: tuple = _load_config_file(file)
+
+            # Validate each doc with Pydantic
+            for doc in documents:
+                GlobalConfigModel.model_validate(doc)
+
+            # Apply the documents
+            for doc in documents:
+                _apply_root_config(doc, file, self.root, args)
+
+        # Apply the command line arguments
+        if args is not None:
+            _apply_cli(args, self.root)
 
 
-def load_config_file(file: Path) -> tuple:
+CONFIG: ConfigManager = ConfigManager()
+
+
+def _load_config_file(file: Path) -> tuple:
     """
     Given the path to a YAML-formatted config file, load it as a tuple of one
     or more YAML documents. This handles and re-raises exceptions with an
@@ -128,41 +158,6 @@ def load_config_file(file: Path) -> tuple:
     except Exception as e:
         raise ValueError(f'Invalid/unparseable config file "{file}": '
                          f'{e.__class__.__name__}: {e}')
-
-
-def add_root_config(file: Path,
-                    args: Namespace | None = None) -> None:
-    """
-    Update the root config based on a configuration file (and possibly the
-    command line arguments).
-
-    If the config file doesn't exist, only the command line arguments are
-    applied. If those aren't given either, nothing happens.
-
-    :param file: The path to the config file.
-    :param args: The command line arguments. Defaults to None.
-    :return: None
-    """
-
-    # Get the existing root config
-    config: GlobalConfig = CONFIG.root
-
-    # Process the config file only if it exists
-    if file.exists():
-        # Load
-        documents: tuple = load_config_file(file)
-
-        # Validate each doc with Pydantic
-        for doc in documents:
-            GlobalConfigModel.model_validate(doc)
-
-        # Apply the documents
-        for doc in documents:
-            _apply_root_config(doc, file, config, args)
-
-    # Apply the command line arguments
-    if args is not None:
-        _apply_cli(args, config)
 
 
 def _apply_root_config(document,
