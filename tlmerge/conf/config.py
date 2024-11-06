@@ -251,6 +251,62 @@ class Config:
         return c
 
 
+class ConfigView:
+    """
+    This is a read-only view of a Config record. Attempting to modify its
+    settings will raise an AttributeError.
+    """
+
+    def __init__(self, config: Config) -> None:
+        """
+        Initialize a view wrapping the given Config record.
+
+        :param config: The Config record to wrap.
+        """
+
+        self._config = config
+
+    @property
+    def date_format(self) -> str:
+        return self._config.date_format
+
+    @property
+    def include_dates(self) -> list[str]:
+        return self._config.include_dates
+
+    @property
+    def exclude_dates(self) -> list[str]:
+        return self._config.exclude_dates
+
+    @property
+    def include_groups(self) -> list[Path]:
+        return self._config.include_groups
+
+    @property
+    def exclude_groups(self) -> list[Path]:
+        return self._config.exclude_groups
+
+    @property
+    def group_ordering(self) -> Literal['abc', 'natural', 'num']:
+        return self._config.group_ordering
+
+    @property
+    def white_balance(self) -> dict[str, float]:
+        return self._config.white_balance
+
+    @property
+    def chromatic_aberration(self) -> dict[str, float]:
+        return self._config.chromatic_aberration
+
+    @property
+    def median_filter(self) -> int:
+        return self._config.median_filter
+
+    @property
+    def dark_frame(self) -> Path | None:
+        return self._config.dark_frame
+
+
 class GlobalConfig(Config):
     def __init__(self,
                  log: Path | None = DEFAULT_LOG_FILE,
@@ -366,3 +422,36 @@ class GlobalConfig(Config):
             return 'silent'
         else:
             return None
+
+
+class GlobalConfigView(ConfigView):
+    """
+    This is a read-only view of a GlobalConfig record. Attempting to modify its
+    settings will raise an AttributeError.
+    """
+
+    def __init__(self, config: GlobalConfig):
+        super().__init__(config)
+
+    @property
+    def log(self) -> Path | None:
+        return self._config.log  # noqa
+
+    @property
+    def database(self) -> Path | None:
+        return self._config.database  # noqa
+
+    @property
+    def verbose(self) -> bool:
+        return self._config.verbose  # noqa
+
+    @property
+    def quiet(self) -> bool:
+        return self._config.quiet  # noqa
+
+    @property
+    def silent(self) -> bool:
+        return self._config.silent  # noqa
+
+    def log_level(self) -> Literal['verbose', 'quiet', 'silent'] | None:
+        return self._config.log_level()  # noqa
