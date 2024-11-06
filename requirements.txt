@@ -1,0 +1,8 @@
+annotated-types
+coloredlogs
+humanfriendly
+platformdirs
+pydantic
+pydantic_core
+ruamel.yaml
+typing_extensions
