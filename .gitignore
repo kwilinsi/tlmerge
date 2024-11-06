@@ -1,0 +1,8 @@
+# Virtual environments
+/*venv*
+
+# Testing
+/test*
+
+# PyCharm
+/.idea
