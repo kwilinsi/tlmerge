@@ -4,10 +4,11 @@ import logging
 import sys
 
 from .conf import configure_log, CONFIG, parse_cli, write_default_config
+from .db import DB
 from . import run
 
 
-def main():
+async def main():
     # Parse command line arguments
     args: Namespace = parse_cli()
 
@@ -42,15 +43,15 @@ def main():
         write_default_config(args.config)
         log.info(f'Saved default configuration to "{args.config}"')
 
-    # Get the appropriate task for the user-selected mode
+    # Initialize the database
+    await DB.initialize(root_config.database)
+
+    # Run the appropriate task for the user-selected mode
     if args.mode == 'scan':
-        task = run.scan(args.project)
+        await run.scan(args.project)
     else:
         sys.exit(1 if args.silent else f"Invalid execution mode '{args.mode}'")
 
-    # Run the task in the asyncio event loop
-    asyncio.run(task)
-
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

@@ -1,8 +1,11 @@
+aiosqlite
 annotated-types
 coloredlogs
+greenlet
 humanfriendly
 platformdirs
 pydantic
 pydantic_core
 ruamel.yaml
+SQLAlchemy
 typing_extensions

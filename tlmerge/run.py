@@ -19,7 +19,7 @@ async def scan(project: Path) -> None:
     _log.info(f'Scanning timelapse project "{project}" '
               '(this may take some time)')
 
-    # Scan through the photos
+    # Scan through the photos. Ordered so the log messages look better
     for _ in iterate_all_photos(project, cfg.date_format,
                                 cfg.group_ordering, order=True):
         # The generator logs summary stats; no need to do anything here
