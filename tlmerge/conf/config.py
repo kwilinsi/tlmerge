@@ -96,7 +96,7 @@ class Config:
         """
 
         # Dates and groups
-        self._date_format: str = date_format
+        self._date_format: str = coerce_date_format(date_format)
         self._include_dates: list[str] = \
             [] if include_dates is None else include_dates
         self._exclude_dates: list[str] = \

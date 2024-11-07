@@ -3,8 +3,7 @@ from argparse import Namespace
 import logging
 import sys
 
-from .conf import (configure_log, CONFIG, load_sub_config_files,
-                   parse_cli, write_default_config)
+from .conf import configure_log, CONFIG, parse_cli, write_default_config
 from . import run
 
 
@@ -27,13 +26,15 @@ def main():
     log = logging.getLogger(__name__)
 
     # Load the sub-config files
-    n = load_sub_config_files(args.project, args)
+    n = CONFIG.load_all_config_files(args.project, args)
     if n + global_cfg == 0:
         log.info('No config files found')
     elif n == 0:
         log.info('Loaded 1 (global) config file')
+    elif not global_cfg:
+        log.info(f"Loaded {n} (non-global) config file{'' if n == 1 else 's'}")
     else:
-        log.info(f'Loaded {n} total config files')
+        log.info(f'Loaded {n + 1} total config files')
 
     # If the config file doesn't exist and --make_config flag is present,
     # create the file with default configuration

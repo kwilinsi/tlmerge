@@ -15,4 +15,4 @@ async def scan(project: Path) -> None:
     """
 
     cfg = CONFIG.root
-    _log.info(f'Scanning {project} (db={cfg.database})')
+    _log.info(f'Scanning timelapse project "{project}"')

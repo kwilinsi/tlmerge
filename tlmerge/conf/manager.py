@@ -193,6 +193,66 @@ class ConfigManager:
         # Return whether a global config file was used
         return applied_config_file
 
+    def load_all_config_files(self,
+                              project: Path,
+                              args: Namespace | None = None) -> int:
+        """
+        Load all the sub-config files in the project directory. This is every
+        config file except for the global one, which should have already been
+        loaded.
+
+        Each config file can overwrite some of the global settings for its
+        individual date or group. However, command line arguments always take
+        precedence: wherever present, they override all config files.
+
+        :param project: The path to the project directory.
+        :param args: The parsed command line arguments, if applicable.
+        :return: The number of separate config files that were loaded.
+        """
+
+        # Define the logger here, as it can't be used in earlier steps while
+        # processing the global config (as the settings there affect the logger)
+        log = logging.getLogger(__name__)
+
+        # Count the number of config files
+        counter = 0
+
+        # Importing here to avoid circular import ¯\_(ツ)_/¯
+        from tlmerge.scan import iterate_date_dirs, iterate_group_dirs
+
+        # Scan each date directory
+        for date_dir in iterate_date_dirs(project, self.root.date_format):
+            found_any_files = False
+            file, n = _find_and_apply_config_file(
+                date_dir, self.modifiable_root, date_dir.name
+            )
+            if n > 0:
+                log.debug(f"Loaded config \"{file.relative_to(project)}\" "
+                          f"with {n} YAML document{'' if n == 1 else 's'}")
+                counter += n
+                found_any_files = True
+
+            # Get the config instance for this date
+            cfg = CONFIG.get_modifiable(date_dir.name)
+
+            # Scan each group directory within this date
+            for group_dir in iterate_group_dirs(date_dir, cfg.group_ordering):
+                file, n = _find_and_apply_config_file(
+                    group_dir, cfg, date_dir.name, group_dir.name
+                )
+                if n > 0:
+                    log.debug(f"Loaded config \"{file.relative_to(project)}\" "
+                              f"with {n} YAML document{'' if n == 1 else 's'}")
+                    counter += n
+                    found_any_files = True
+
+            # If any Config records were updated, apply the command line args
+            if found_any_files and args is not None:
+                _apply_date_cli(args, cfg)
+
+        # Return the total config file count
+        return counter
+
 
 CONFIG: ConfigManager = ConfigManager()
 
@@ -214,6 +274,38 @@ def _load_config_file(file: Path) -> tuple:
     except Exception as e:
         raise ValueError(f'Invalid/unparseable config file "{file}": '
                          f'{e.__class__.__name__}: {e}')
+
+
+def _find_and_apply_config_file(directory: Path,
+                                parent_config: Config | ConfigView,
+                                date_str: str,
+                                group_str: str | None = None) -> \
+        tuple[Path | None, int]:
+    """
+    Given a directory, check to see if it contains a config file. If it does,
+    parse that file, and update the appropriate Config record.
+
+    :param directory: The directory to check.
+    :param parent_config: The parent Config record.
+    :param date_str: The date string, for obtaining the new Config record.
+    :param group_str: The group string (if applicable). Defaults to None.
+    :return: The path to the config file that was checked and the number of
+     parsed documents. If the number of documents is 0, the file likely does
+     not exist.
+    """
+
+    i = 0
+    file = directory / DEFAULT_CONFIG_FILE
+    if file.is_file():
+        # Parse the file
+        documents = _load_config_file(file)
+
+        # Load the documents
+        for doc in documents:
+            _apply_child_config(doc, parent_config, date_str, group_str)
+            i += 1
+
+    return file, i
 
 
 def _apply_root_config(document,
@@ -456,85 +548,6 @@ def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
     # Database
     if hasattr(args, 'database'):
         config.database = args.database
-
-
-def load_sub_config_files(project: Path,
-                          args: Namespace | None = None) -> int:
-    """
-    Load all the sub-config files in the project directory. This is every config
-    file except for the global one, which should have already been loaded.
-
-    Each config file can overwrite some of the global settings for its
-    individual date or group. However, command line arguments always take
-    precedence: wherever present, they override all config files.
-
-    :param project: The path to the project directory.
-    :param args: The parsed command line arguments, if applicable.
-    :return: The number of separate config files that were loaded.
-    """
-
-    # Define the logger here, as it can't be used in earlier steps while
-    # processing the global config (as the settings there affect the logger)
-    log = logging.getLogger(__name__)
-
-    # Get the root config
-    root = CONFIG.root
-
-    # Count the number of config files
-    counter = 0
-
-    # Importing here to avoid circular import ¯\_(ツ)_/¯
-    from tlmerge.scan import iterate_date_dirs, iterate_group_dirs
-
-    # Scan each date directory
-    for date_dir in iterate_date_dirs(project, root.date_format):
-        # Look for a config file
-        d_file = date_dir / DEFAULT_CONFIG_FILE
-        found_any_files = False
-        if d_file.is_file():
-            # Parse the file
-            documents = _load_config_file(d_file)
-
-            # Load the documents
-            for doc in documents:
-                _apply_child_config(doc, root, date_dir.name)
-            log.debug(
-                f"Loaded config \"{d_file.relative_to(project)}\" with "
-                f"{len(documents)} YAML "
-                f"document{'' if len(documents) == 1 else 's'}"
-            )
-            counter += 1
-            found_any_files = True
-
-        # Get the config instance for this date
-        cfg = CONFIG.get_modifiable(date_dir.name)
-
-        # Scan each group directory within this date
-        for group_dir in iterate_group_dirs(date_dir, cfg.group_ordering):
-            # Look for a config file
-            g_file = group_dir / DEFAULT_CONFIG_FILE
-            if g_file.is_file():
-                # Parse the file
-                documents = _load_config_file(g_file)
-
-                # Load the documents
-                for doc in documents:
-                    _apply_child_config(doc, root,
-                                        date_dir.name, group_dir.name)
-                log.debug(
-                    f"Loaded config \"{g_file.relative_to(project)}\" with "
-                    f"{len(documents)} YAML "
-                    f"document{'' if len(documents) == 1 else 's'}"
-                )
-                counter += 1
-                found_any_files = True
-
-        # If any Config records were updated, apply the command line args
-        if found_any_files and args is not None:
-            _apply_date_cli(args, cfg)
-
-    # Return the total config file count
-    return counter
 
 
 def write_default_config(file: Path):
