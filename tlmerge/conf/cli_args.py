@@ -155,7 +155,7 @@ def _build_parser() -> ArgumentParser:
 
     parser.add_argument(
         '--group_ordering',
-        choices=['abc', 'natural'],
+        choices=['abc', 'natural', 'num'],
         help="Specify the order in which to process groups. Use 'natural' to "
              "use the natural sort order for strings. Use 'abc' to for an "
              "intuitive order with a/b/c groups: 'a', 'b', ..., 'y', 'z', "

@@ -223,21 +223,6 @@ class GlobalConfigModel(BaseConfigModel):
         return self
 
     @model_validator(mode='after')
-    def check_database(self) -> Self:
-        # Best effort validation on the database file; this is similar to the
-        # log file. We can only validate if it's an absolute path or relative
-        # and more than just a file name
-        db = Path(self.database)
-        if db.is_absolute() or db.parent != Path('.'):
-            if not db.is_absolute():
-                db = db.resolve()
-            if db.is_dir():
-                raise ValueError(f"Invalid database file \"{db}\": "
-                                 f"that's a directory")
-
-        return self
-
-    @model_validator(mode='after')
     def check_dates_groups(self) -> Self:
         # Dates
         for d in self.include_dates:

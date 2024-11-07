@@ -1,5 +1,6 @@
 from argparse import Namespace
 from datetime import date
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -7,8 +8,9 @@ from ruamel.yaml import YAML
 
 from .config import Config, ConfigView, GlobalConfig, GlobalConfigView
 from .validation import GlobalConfigModel
-from . import DEFAULT_DATABASE_FILE
+from . import DEFAULT_DATABASE_FILE, DEFAULT_CONFIG_FILE
 
+# Define the YAML reader for parsing config files
 _yaml = YAML()
 _yaml.sequence_indent = 4
 _yaml.sequence_dash_offset = 2
@@ -154,7 +156,7 @@ class ConfigManager:
         self._view_tree[(date_str, group)] = ConfigView(clone)
         return clone
 
-    def update_root(self, file: Path, args: Namespace | None = None) -> None:
+    def update_root(self, file: Path, args: Namespace | None = None) -> bool:
         """
         Update the root config based on a configuration file (and possibly the
         command line arguments).
@@ -164,12 +166,14 @@ class ConfigManager:
 
         :param file: The path to the config file.
         :param args: The command line arguments. Defaults to None.
-        :return: None
+        :return: Whether a config file exists and was applied.
         """
+
+        applied_config_file = False
 
         # Process the config file only if it exists
         if file.exists():
-            # Load
+            # Parse YAML
             documents: tuple = _load_config_file(file)
 
             # Validate each doc with Pydantic
@@ -180,9 +184,14 @@ class ConfigManager:
             for doc in documents:
                 _apply_root_config(doc, file, self.modifiable_root, args)
 
+            applied_config_file = True
+
         # Apply the command line arguments
         if args is not None:
-            _apply_cli(args, self.modifiable_root)
+            _apply_global_cli(args, self.modifiable_root)
+
+        # Return whether a global config file was used
+        return applied_config_file
 
 
 CONFIG: ConfigManager = ConfigManager()
@@ -281,33 +290,47 @@ def _apply_root_config(document,
         for override in document['overrides']:
             _apply_child_config(override, config)
 
-    # Apply the command line arguments
-    _apply_cli(args, config)
+    # Apply the command line arguments. These recursively propagate to
+    # children records, so no need to separately apply CLI args to the children
+    # created from overrides above
+    _apply_global_cli(args, config)
 
 
 def _apply_child_config(document,
-                        parent_config: Config,
-                        parent_date: str | None = None) -> None:
+                        parent_config: Config | ConfigView,
+                        date_str: str | None = None,
+                        group_str: str | None = None) -> None:
     """
     Update a config record for a date or group config file. This also applies
     to overrides in a parent config file.
 
     :param document: The parsed YAML document to apply.
-    :param parent_config: The parent Config record.
-    :param parent_date: The parent date (as a string) if the parent is a date
-     config file.
+    :param parent_config: The parent Config record, used exclusively for
+    getting the date format (if necessary).
+    :param date_str: The date (as a string) if known. If this is omitted (e.g.
+     for overrides) the 'date' attribute of the document is used.
+    :param group_str: The group if known. If omitted, the 'group' attribute of
+     the document is used if available.
     :return: None
     """
 
     # Get the appropriate config record, creating one if it doesn't exist
     d = None
-    if 'date' in document:
+    config: Config
+    if date_str is not None:
+        if group_str is not None:
+            config = CONFIG.get_modifiable(date_str, group_str)
+        else:
+            config = CONFIG.get_modifiable(date_str,
+                                           document.get('group', None))
+    elif 'date' in document:
         d = document['date']
         if isinstance(d, date):
             d = d.strftime(parent_config.date_format)
         config: Config = CONFIG.get_modifiable(d, document.get('group', None))
     else:
-        config: Config = CONFIG.get_modifiable(parent_date, document['group'])
+        raise ValueError(f"Cannot apply document to child config: date_str "
+                         f"is None and document is missing 'date' attribute.")
 
     # Update the group info. If this is a group override, this'll simply be
     # skipped as these options only exist for date overrides
@@ -326,7 +349,7 @@ def _apply_child_config(document,
     if 'overrides' in document:
         assert d is not None
         for override in document['overrides']:
-            _apply_child_config(override, parent_config, parent_date=d)
+            _apply_child_config(override, parent_config, date_str=d)
 
 
 def _apply_camera_config(document, config: Config) -> None:
@@ -349,31 +372,15 @@ def _apply_camera_config(document, config: Config) -> None:
         config.dark_frame = document['dark_frame']
 
 
-def _apply_cli(args: Namespace, config: GlobalConfig) -> None:
+def _apply_base_cli(args: Namespace, config: Config) -> None:
     """
-    Apply the command line arguments to the given config record (and its
-    children, as changes to config records propagate automatically).
+    Apply the basic command line arguments to the given Config record. This
+    covers all the arguments for a group-level record.
 
-    :param args: The parsed command line arguments.
-    :param config: The config record to modify.
+    :param args: The command line arguments.
+    :param config: The Config record to modify.
     :return: None
     """
-
-    # Dates
-    if hasattr(args, 'date_format'):
-        config.date_format = args.date_format
-    if hasattr(args, 'include_dates'):
-        config.include_dates = args.include_dates
-    if hasattr(args, 'exclude_dates'):
-        config.include_dates = args.include_dates
-
-    # Groups
-    if hasattr(args, 'group_ordering'):
-        config.group_ordering = args.group_ordering
-    if hasattr(args, 'include_groups'):
-        config.include_groups = args.include_groups
-    if hasattr(args, 'exclude_groups'):
-        config.exclude_groups = args.exclude_groups
 
     # Camera settings
     if hasattr(args, 'white_balance'):
@@ -393,6 +400,49 @@ def _apply_cli(args: Namespace, config: GlobalConfig) -> None:
     if hasattr(args, 'dark_frame'):
         config.dark_frame = args.dark_frame
 
+
+def _apply_date_cli(args: Namespace, config: Config) -> None:
+    """
+    Apply the date-level command line arguments pertaining to the given Config
+    record. This also calls _apply_base_cli() for group-level arguments.
+
+    :param args: The command line arguments.
+    :param config: The Config record to modify.
+    :return: None
+    """
+
+    _apply_base_cli(args, config)
+
+    # Groups
+    if hasattr(args, 'group_ordering'):
+        config.group_ordering = args.group_ordering
+    if hasattr(args, 'include_groups'):
+        config.include_groups = args.include_groups
+    if hasattr(args, 'exclude_groups'):
+        config.exclude_groups = args.exclude_groups
+
+
+def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
+    """
+    Apply all the command line arguments to the given global config record
+    (and its children, as that propagates automatically). This calls
+    _apply_date_cli() for date- and group-level arguments.
+
+    :param args: The parsed command line arguments.
+    :param config: The Config record to modify.
+    :return: None
+    """
+
+    _apply_date_cli(args, config)
+
+    # Dates
+    if hasattr(args, 'date_format'):
+        config.date_format = args.date_format
+    if hasattr(args, 'include_dates'):
+        config.include_dates = args.include_dates
+    if hasattr(args, 'exclude_dates'):
+        config.include_dates = args.include_dates
+
     # Logging
     if hasattr(args, 'log'):
         config.log = args.log
@@ -406,6 +456,85 @@ def _apply_cli(args: Namespace, config: GlobalConfig) -> None:
     # Database
     if hasattr(args, 'database'):
         config.database = args.database
+
+
+def load_sub_config_files(project: Path,
+                          args: Namespace | None = None) -> int:
+    """
+    Load all the sub-config files in the project directory. This is every config
+    file except for the global one, which should have already been loaded.
+
+    Each config file can overwrite some of the global settings for its
+    individual date or group. However, command line arguments always take
+    precedence: wherever present, they override all config files.
+
+    :param project: The path to the project directory.
+    :param args: The parsed command line arguments, if applicable.
+    :return: The number of separate config files that were loaded.
+    """
+
+    # Define the logger here, as it can't be used in earlier steps while
+    # processing the global config (as the settings there affect the logger)
+    log = logging.getLogger(__name__)
+
+    # Get the root config
+    root = CONFIG.root
+
+    # Count the number of config files
+    counter = 0
+
+    # Importing here to avoid circular import ¯\_(ツ)_/¯
+    from tlmerge.scan import iterate_date_dirs, iterate_group_dirs
+
+    # Scan each date directory
+    for date_dir in iterate_date_dirs(project, root.date_format):
+        # Look for a config file
+        d_file = date_dir / DEFAULT_CONFIG_FILE
+        found_any_files = False
+        if d_file.is_file():
+            # Parse the file
+            documents = _load_config_file(d_file)
+
+            # Load the documents
+            for doc in documents:
+                _apply_child_config(doc, root, date_dir.name)
+            log.debug(
+                f"Loaded config \"{d_file.relative_to(project)}\" with "
+                f"{len(documents)} YAML "
+                f"document{'' if len(documents) == 1 else 's'}"
+            )
+            counter += 1
+            found_any_files = True
+
+        # Get the config instance for this date
+        cfg = CONFIG.get_modifiable(date_dir.name)
+
+        # Scan each group directory within this date
+        for group_dir in iterate_group_dirs(date_dir, cfg.group_ordering):
+            # Look for a config file
+            g_file = group_dir / DEFAULT_CONFIG_FILE
+            if g_file.is_file():
+                # Parse the file
+                documents = _load_config_file(g_file)
+
+                # Load the documents
+                for doc in documents:
+                    _apply_child_config(doc, root,
+                                        date_dir.name, group_dir.name)
+                log.debug(
+                    f"Loaded config \"{g_file.relative_to(project)}\" with "
+                    f"{len(documents)} YAML "
+                    f"document{'' if len(documents) == 1 else 's'}"
+                )
+                counter += 1
+                found_any_files = True
+
+        # If any Config records were updated, apply the command line args
+        if found_any_files and args is not None:
+            _apply_date_cli(args, cfg)
+
+    # Return the total config file count
+    return counter
 
 
 def write_default_config(file: Path):
