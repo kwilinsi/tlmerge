@@ -3,13 +3,14 @@ from datetime import date, datetime
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+
+from tlmerge.conf import CONFIG
 
 _log = logging.getLogger(__name__)
 
 
-def iterate_date_dirs(project: Path,
-                      date_format: str,
+def iterate_date_dirs(project: Path, *,
+                      ignore_excluded: bool = False,
                       order: bool = False) -> Generator[Path, None, None]:
     """
     Iterate over all the directories in the project root that match the date
@@ -17,17 +18,27 @@ def iterate_date_dirs(project: Path,
     photos.
 
     :param project: The root project directory.
-    :param date_format: The date format used in the directory names.
+    :param ignore_excluded: Whether to ignore the configuration that could
+     otherwise exclude certain dates.
     :param order: Whether to iterate over the dates chronologically.
     :return: A generator yielding paths to matching date directories.
     """
 
     dirs: list[tuple[date, Path]] = []
+    date_format = CONFIG.root.date_format
+    if ignore_excluded:
+        excluded_dates = []
+    else:
+        excluded_dates = CONFIG.root.get_excluded_dates()
 
     # Iterate over everything in the project root
     for directory in project.iterdir():
         # Make sure it's a directory
         if not directory.is_dir():
+            continue
+
+        # If explicitly excluded, skip it
+        if directory.name in excluded_dates:
             continue
 
         # Ensure it matches the date format
@@ -47,8 +58,8 @@ def iterate_date_dirs(project: Path,
         yield from (d for _, d in sorted(dirs, key=lambda entry: entry[0]))
 
 
-def iterate_group_dirs(date_dir: Path,
-                       group_ordering: Literal['abc', 'natural', 'num'],
+def iterate_group_dirs(date_dir: Path, *,
+                       ignore_excluded: bool = False,
                        order: bool = False) -> Generator[Path, None, None]:
     """
     Iterate over all the group directories within a particular date in a
@@ -56,17 +67,24 @@ def iterate_group_dirs(date_dir: Path,
 
     :param date_dir: The path to the date directory, which contains zero or
      more groups.
-    :param group_ordering: How the groups are ordered. This doesn't control the
-     order the groups are yielded by this function (use the `order` parameter
-     for that), but 'abc' and 'num' cause non-matching directories to be
-     ignored. If using 'natural' ordering, all directories are yielded.
+    :param ignore_excluded: Whether to ignore configurations that could
+    otherwise exclude certain groups.
     :param order: Whether to iterate over the groups in order based on the
      group_ordering.
     :return: A generator yielding paths to matching groups.
     """
 
-    # Get every directory
-    directories = [d for d in date_dir.iterdir() if d.is_dir()]
+    # Get the group ordering policy for this date and the excluded groups
+    cfg = CONFIG[date_dir.name]
+    group_ordering = cfg.group_ordering
+    if ignore_excluded:
+        excluded_groups = []
+    else:
+        excluded_groups = cfg.get_excluded_groups(date_dir.name)
+
+    # Get every non-excluded directory
+    directories = [d for d in date_dir.iterdir()
+                   if d.is_dir() and not d.name in excluded_groups]
 
     # In 'natural' ordering mode, yield everything
     if group_ordering == 'natural':
@@ -117,8 +135,6 @@ def iterate_group_dirs(date_dir: Path,
 
 
 def iterate_all_photos(project: Path,
-                       date_format: str,
-                       group_ordering: Literal['abc', 'natural', 'num'],
                        order: bool = False,
                        log_summary: bool = True) -> \
         Generator[Path, None, None]:
@@ -126,8 +142,6 @@ def iterate_all_photos(project: Path,
     Get a generator that iterates over every photo in the timelapse project.
 
     :param project: The root project directory.
-    :param date_format: The date format used in the directory names.
-    :param group_ordering: The method for ordering (and filtering) groups.
     :param order: Iterate over the photos in order.
     :param log_summary: Whether to log summary statistics.
     :return: A generator that yields a path to each photo.
@@ -137,12 +151,12 @@ def iterate_all_photos(project: Path,
     dates, groups, photos = 0, 0, 0
 
     # Iterate through each date directory
-    for date_dir in iterate_date_dirs(project, date_format, order):
+    for date_dir in iterate_date_dirs(project, order=order):
         photos_in_date = 0
         dates += 1
 
         # Then through each group directory
-        for group_dir in iterate_group_dirs(date_dir, group_ordering, order):
+        for group_dir in iterate_group_dirs(date_dir, order=order):
             photos_in_group = 0
             groups += 1
 

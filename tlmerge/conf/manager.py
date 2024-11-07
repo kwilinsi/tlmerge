@@ -55,15 +55,21 @@ class ConfigManager:
                             key == (None, None))):
             return self.root
 
-        # If not None, the key must be a tuple with one or two elements, both
-        # either string or None
-        if not isinstance(key, tuple) or len(key) > 2 or \
-                any(k is not None and not isinstance(k, str) for k in key):
+        # Validate key type, and separate into date and group
+        if isinstance(key, str):
+            # Allow a single string
+            dt, grp = key, None
+        elif isinstance(key, tuple) and len(key) <= 2 and \
+                all(k is None or isinstance(k, str) for k in key):
+            # Allow a tuple if it's 1 or 2 strings or None
+            if len(key) == 2:
+                dt, grp = key
+            else:
+                dt, grp = key[0], None
+        else:
+            # Reject everything else
             raise KeyError('Expected (date, group) indices when getting '
                            f'config record: got "{key}"')
-
-        # Separate into date and group keys
-        dt, grp = key
 
         # If either is blank, raise an error
         if (dt is not None and not dt.strip()) or \
@@ -222,7 +228,7 @@ class ConfigManager:
         from tlmerge.scan import iterate_date_dirs, iterate_group_dirs
 
         # Scan each date directory
-        for date_dir in iterate_date_dirs(project, self.root.date_format):
+        for date_dir in iterate_date_dirs(project, ignore_excluded=True):
             found_any_files = False
             file, n = _find_and_apply_config_file(
                 date_dir, self.modifiable_root, date_dir.name
@@ -239,7 +245,7 @@ class ConfigManager:
             cfg = CONFIG.get_modifiable(date_dir.name)
 
             # Scan each group directory within this date
-            for group_dir in iterate_group_dirs(date_dir, cfg.group_ordering):
+            for group_dir in iterate_group_dirs(date_dir, ignore_excluded=True):
                 file, n = _find_and_apply_config_file(
                     group_dir, cfg, date_dir.name, group_dir.name
                 )
@@ -537,7 +543,7 @@ def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
     if hasattr(args, 'include_dates'):
         config.include_dates = args.include_dates
     if hasattr(args, 'exclude_dates'):
-        config.include_dates = args.include_dates
+        config.exclude_dates = args.exclude_dates
 
     # Logging
     if hasattr(args, 'log'):

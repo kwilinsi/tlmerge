@@ -165,8 +165,9 @@ class Config:
         return self._include_groups
 
     @include_groups.setter
-    def include_groups(self, include_groups: list[Path]) -> None:
-        self._include_groups = include_groups
+    def include_groups(self, include_groups: list[Path | str]) -> None:
+        self._include_groups = [g if isinstance(g, Path) else Path(g)
+                                for g in include_groups]
         for child in self.children:
             child.include_groups = include_groups
 
@@ -175,8 +176,9 @@ class Config:
         return self._exclude_groups
 
     @exclude_groups.setter
-    def exclude_groups(self, exclude_groups: list[Path]) -> None:
-        self._exclude_groups = exclude_groups
+    def exclude_groups(self, exclude_groups: list[Path | str]) -> None:
+        self._exclude_groups = [g if isinstance(g, Path) else Path(g)
+                                for g in exclude_groups]
         for child in self.children:
             child.exclude_groups = exclude_groups
 
@@ -232,6 +234,34 @@ class Config:
         self._dark_frame = dark_frame
         for child in self.children:
             child.dark_frame = dark_frame
+
+    def get_excluded_dates(self) -> list[str]:
+        """
+        Get the list of excluded_dates with the included_dates removed, as
+        inclusion supersedes exclusion (since everything is included by
+        default).
+
+        :return: A list of excluded dates.
+        """
+
+        return [d for d in self.exclude_dates if d not in self.include_dates]
+
+    def get_excluded_groups(self, date_str: str) -> list[str]:
+        """
+        Get the list of groups to exclude for a particular date.
+
+        :param date_str: The date in question.
+        :return: A list of excluded groups, given as strings by their name (not
+         Paths, and not including the date).
+        """
+
+        # Filter to the groups applicable to this date
+        exclude_filtered = [g.name for g in self.exclude_groups
+                            if g.parent.name == date_str]
+        include_filtered = [g.name for g in self.include_groups
+                            if g.parent.name == date_str]
+
+        return [g for g in exclude_filtered if g not in include_filtered]
 
     def clone(self) -> Config:
         c = Config(
@@ -305,6 +335,26 @@ class ConfigView:
     @property
     def dark_frame(self) -> Path | None:
         return self._config.dark_frame
+
+    def get_excluded_dates(self) -> list[str]:
+        """
+        Get the list of dates to exclude.
+
+        :return: A list of excluded dates.
+        """
+
+        return self._config.get_excluded_dates()
+
+    def get_excluded_groups(self, date_str: str) -> list[str]:
+        """
+        Get the list of groups to exclude for a particular date.
+
+        :param date_str: The date in question.
+        :return: A list of excluded groups, given as strings by their name (not
+         Paths, and not including the date).
+        """
+
+        return self._config.get_excluded_groups(date_str)
 
 
 class GlobalConfig(Config):

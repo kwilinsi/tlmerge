@@ -20,7 +20,6 @@ async def scan(project: Path) -> None:
               '(this may take some time)')
 
     # Scan through the photos. Ordered so the log messages look better
-    for _ in iterate_all_photos(project, cfg.date_format,
-                                cfg.group_ordering, order=True):
+    for _ in iterate_all_photos(project, order=True):
         # The generator logs summary stats; no need to do anything here
         pass
