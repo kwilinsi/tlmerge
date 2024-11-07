@@ -7,6 +7,8 @@ from .conf import configure_log, CONFIG, parse_cli, write_default_config
 from .db import DB
 from . import run
 
+_silent: bool = False
+
 
 async def main():
     # Parse command line arguments
@@ -21,8 +23,12 @@ async def main():
         else:
             raise
 
-    # Initialize the logger
+    # Get the root config record
     root_config = CONFIG.root
+    global _silent
+    _silent = root_config.silent
+
+    # Initialize the logger
     configure_log(root_config.log, root_config.log_level())
     log = logging.getLogger(__name__)
 
@@ -47,11 +53,16 @@ async def main():
     await DB.initialize(root_config.database)
 
     # Run the appropriate task for the user-selected mode
+    asyncio.current_task().set_name(args.mode.capitalize())
     if args.mode == 'scan':
         await run.scan(args.project)
     else:
-        sys.exit(1 if args.silent else f"Invalid execution mode '{args.mode}'")
+        sys.exit(1 if root_config.silent
+                 else f"Invalid execution mode '{args.mode}'")
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(1 if _silent else 'Keyboard interrupt: terminating')
