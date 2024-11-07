@@ -1,6 +1,7 @@
 from argparse import Namespace
 from datetime import date
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -227,8 +228,10 @@ class ConfigManager:
                 date_dir, self.modifiable_root, date_dir.name
             )
             if n > 0:
-                log.debug(f"Loaded config \"{file.relative_to(project)}\" "
-                          f"with {n} YAML document{'' if n == 1 else 's'}")
+                log.debug(
+                    f"Loaded config \".{os.sep}{file.relative_to(project)}\" "
+                    f"with {n} YAML document{'' if n == 1 else 's'}"
+                )
                 counter += n
                 found_any_files = True
 
@@ -241,7 +244,8 @@ class ConfigManager:
                     group_dir, cfg, date_dir.name, group_dir.name
                 )
                 if n > 0:
-                    log.debug(f"Loaded config \"{file.relative_to(project)}\" "
+                    log.debug(f"Loaded config "
+                              f"\".{os.sep}{file.relative_to(project)}\" "
                               f"with {n} YAML document{'' if n == 1 else 's'}")
                     counter += n
                     found_any_files = True
