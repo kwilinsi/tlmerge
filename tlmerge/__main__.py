@@ -16,7 +16,7 @@ async def main():
 
     # Load the global configuration file
     try:
-        global_cfg = CONFIG.update_root(args.config, args)
+        global_cfg = CONFIG.update_root(file=args.config, args=args)
     except Exception:
         if args.silent:
             sys.exit(1)

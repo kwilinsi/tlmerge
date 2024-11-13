@@ -89,7 +89,7 @@ async def preprocess_photo(file: Path) -> Photo:
     :return: A new database Photo record.
     """
 
-    _log.info(f'Preprocessing {file.parent.name}/{file.stem}')
+    _log.info(f'Preprocessing {CONFIG.root.rel_path(file)}')
 
     # Set the task name to the file name. Useful for logging. The structure
     # (photo/group/date) is reversed since the file name is more important than

@@ -163,7 +163,10 @@ class ConfigManager:
         self._view_tree[(date_str, group)] = ConfigView(clone)
         return clone
 
-    def update_root(self, file: Path, args: Namespace | None = None) -> bool:
+    def update_root(self,
+                    project_path: Path | None = None,
+                    file: Path | None = None,
+                    args: Namespace | None = None) -> bool:
         """
         Update the root config based on a configuration file (and possibly the
         command line arguments).
@@ -171,15 +174,23 @@ class ConfigManager:
         If the config file doesn't exist, only the command line arguments are
         applied. If those aren't given either, nothing happens.
 
-        :param file: The path to the config file.
-        :param args: The command line arguments. Defaults to None.
+        :param project_path: The path to the project directory. This may also
+         be derived from the command line arguments (which override this value).
+        :param file: The path to the config file, if there is one. Defaults to
+         None.
+        :param args: The command line arguments, if there are any. Defaults to
+         None.
         :return: Whether a config file exists and was applied.
         """
+
+        # Set the project path if given
+        if project_path is not None:
+            self.modifiable_root.project = project_path
 
         applied_config_file = False
 
         # Process the config file only if it exists
-        if file.exists():
+        if file is not None and file.exists():
             # Parse YAML
             documents: tuple = _load_config_file(file)
 
@@ -543,6 +554,10 @@ def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
     """
 
     _apply_date_cli(args, config)
+
+    # Project path
+    if hasattr(args, 'project'):
+        config.project = args.project
 
     # Dates
     if hasattr(args, 'date_format'):

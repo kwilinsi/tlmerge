@@ -359,6 +359,7 @@ class ConfigView:
 
 class GlobalConfig(Config):
     def __init__(self,
+                 project: Path | None = None,
                  log: Path | None = DEFAULT_LOG_FILE,
                  verbose: bool = False,
                  quiet: bool = False,
@@ -369,10 +370,13 @@ class GlobalConfig(Config):
                  database: Path = DEFAULT_DATABASE_FILE,
                  **kwargs):
         """
-        Initialize a configuration object with the default settings.
+        Initialize a global configuration object with the default settings.
         """
 
         super().__init__(**kwargs)
+
+        # Project path
+        self._project = project
 
         # Log settings
         self._log: Path | None = log
@@ -387,6 +391,16 @@ class GlobalConfig(Config):
 
         # Database file
         self._database: Path = database
+
+    @property
+    def project(self) -> Path:
+        if self._project is None:
+            raise RuntimeError('The global config project path was never set')
+        return self._project
+
+    @project.setter
+    def project(self, project: Path) -> None:
+        self._project = project
 
     @property
     def log(self) -> Path | None:
@@ -512,6 +526,27 @@ class GlobalConfig(Config):
         # Parse the number of the photos (removing the tilde if necessary)
         return True, random, int(self.sample[1:] if random else self.sample)
 
+    def rel_path(self, path: Path) -> Path:
+        """
+        Return the given path object relative to the global config project
+        directory.
+
+        For example, say the timelapse project directory is at
+        "/home/alice/Pictures/timelapse/foobar/". If given the path
+        "/home/alice/Pictures/timelapse/foobar/2024-01-01/a/my_pic.dng", then
+        this returns "2024-01-01/a/my_pic.dng".
+
+        This is achieved via `pathlib.Path.relative_to()`.
+
+        :param path: The path to apply relative to the project directory.
+        :return: The relative path.
+        :raises RuntimeError: If the project directory path was never set.
+        :raises ValueError: If the given path is not relative to the project
+         directory.
+        """
+
+        return path.relative_to(self.project)
+
 
 # noinspection PyUnresolvedReferences
 class GlobalConfigView(ConfigView):
@@ -522,6 +557,13 @@ class GlobalConfigView(ConfigView):
 
     def __init__(self, config: GlobalConfig):
         super().__init__(config)
+
+    def __getattr__(self, item):
+        return getattr(self._config, item)
+
+    @property
+    def project(self) -> Path:
+        return self._config.project
 
     @property
     def log(self) -> Path | None:
@@ -559,10 +601,7 @@ class GlobalConfigView(ConfigView):
         return self._config.log_level()  # noqa
 
     def sample_details(self) -> tuple[bool, bool, int]:
-        """
-        Get information on the sample if that config is set.
-
-        :return: A tuple with sample details.
-        """
-
         return self._config.sample_details()
+
+    def rel_path(self, path: Path) -> Path:
+        return self._config.rel_path(path)
