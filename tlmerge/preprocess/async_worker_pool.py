@@ -196,9 +196,11 @@ class AsyncWorkerPool:
                 await self.results.put(await coroutine)
 
             return True
+
         except CancelledError:
             # This worker was likely cancelled by another one. Exit silently
             pass
+
         except (KeyboardInterrupt, MemoryError, SystemExit) as e:
             # These are fatal errors that immediately exceed the threshold
 
@@ -211,36 +213,41 @@ class AsyncWorkerPool:
             for i, w in enumerate(self.workers):
                 if i != worker_id:
                     w.cancel()
+
         except Exception as e:
             # Record and log this error
             self.errors.append(e)
             _log.error(e)
 
             # If the max error threshold is reached, cancel the pool
-            if len(self.errors) == self.error_threshold + 1 and \
-                    self.state.value < PoolState.CANCELLING.value:
-                self.state = PoolState.CANCELLING
+            if len(self.errors) == self.error_threshold + 1:
+                if self.state.value < PoolState.CANCELLING.value:
+                    self.state = PoolState.CANCELLING
 
-                # Cancel all the other workers
-                for i, w in enumerate(self.workers):
-                    if i != worker_id:
-                        w.cancel()
+                    # Cancel all the other workers
+                    for i, w in enumerate(self.workers):
+                        if i != worker_id:
+                            w.cancel()
 
-                # Wait for each worker to finish
-                await asyncio.gather(
-                    *[w for i, w in enumerate(self.workers) if
-                      i != worker_id],
-                    return_exceptions=True
-                )
+                    # Wait for each worker to finish
+                    await asyncio.gather(
+                        *[w for i, w in enumerate(self.workers) if
+                          i != worker_id],
+                        return_exceptions=True
+                    )
 
-                # Set the exception
-                self.exception = AsyncPoolExceptionGroup.from_errors(
-                    self.error_threshold,
-                    self.errors
-                )
+                    # Set the exception
+                    self.exception = AsyncPoolExceptionGroup.from_errors(
+                        self.error_threshold,
+                        self.errors
+                    )
 
-                # Now completely cancelled
-                self.state = PoolState.CANCELLED
+                    # Now completely cancelled
+                    self.state = PoolState.CANCELLED
+            elif self.state.value < PoolState.CANCELLING.value:
+                # As long as the pool is not cancelling, return True to
+                # continue running this worker
+                return True
 
         except BaseException as e:
             # All other base exceptions are immediately fatal
@@ -250,6 +257,7 @@ class AsyncWorkerPool:
             for i, w in enumerate(self.workers):
                 if i != worker_id:
                     w.cancel()
+            self.state = PoolState.CANCELLED
 
         # Got some exception. Close the coroutine (if obtained), and return
         # False to signal that the worker should exit
