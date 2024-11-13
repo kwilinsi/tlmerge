@@ -3,6 +3,7 @@ annotated-types
 coloredlogs
 greenlet
 humanfriendly
+pillow
 platformdirs
 pydantic
 pydantic_core

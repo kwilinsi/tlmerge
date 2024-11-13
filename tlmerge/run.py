@@ -1,25 +1,23 @@
+import asyncio
 import logging
 from pathlib import Path
+from typing import Literal
 
-from .conf import CONFIG
-from .scan import iterate_all_photos
+from .scan import scan
+from .preprocess import preprocess
 
 _log = logging.getLogger(__name__)
 
 
-async def scan(project: Path) -> None:
-    """
-    Scan all the files in the timelapse directory, and build a database.
+async def run(mode: Literal['scan', 'preprocess'],
+              project: Path) -> None:
+    # Set the asyncio task name to the mode; useful for logging
+    asyncio.current_task().set_name(mode.capitalize())
 
-    :param project: Path to the project directory.
-    :return: None
-    """
-
-    cfg = CONFIG.root
-    _log.info(f'Scanning timelapse project "{project}" '
-              '(this may take some time)')
-
-    # Scan through the photos. Ordered so the log messages look better
-    for _ in iterate_all_photos(project, order=True):
-        # The generator logs summary stats; no need to do anything here
-        pass
+    # Run the appropriate function based on the mode
+    if mode == 'scan':
+        await scan(project)
+    elif mode == 'preprocess':
+        await preprocess(project)
+    else:
+        raise ValueError(f"Invalid execution mode '{mode}'")

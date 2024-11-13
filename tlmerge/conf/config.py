@@ -363,39 +363,27 @@ class GlobalConfig(Config):
                  verbose: bool = False,
                  quiet: bool = False,
                  silent: bool = False,
+                 workers: int = 20,
+                 max_processing_errors: int = 5,
+                 sample: str | None = None,
                  database: Path = DEFAULT_DATABASE_FILE,
-                 date_format: str = 'yyyy-mm-dd',
-                 include_dates: list[str | date] = None,
-                 exclude_dates: list[str | date] = None,
-                 include_groups: list[Path] = None,
-                 exclude_groups: list[Path] = None,
-                 group_ordering: Literal['abc', 'natural', 'num'] = 'abc',
-                 white_balance: dict[str, float] = None,
-                 chromatic_aberration: dict[str, float] = None,
-                 median_filter: int = 0,
-                 dark_frame: Path | None = None):
+                 **kwargs):
         """
         Initialize a configuration object with the default settings.
         """
 
-        super().__init__(
-            date_format,
-            include_dates,
-            exclude_dates,
-            include_groups,
-            exclude_groups,
-            group_ordering,
-            white_balance,
-            chromatic_aberration,
-            median_filter,
-            dark_frame
-        )
+        super().__init__(**kwargs)
 
         # Log settings
         self._log: Path | None = log
         self._verbose: bool = verbose
         self._quiet: bool = quiet
         self._silent: bool = silent
+
+        # Execution
+        self._workers: int = workers
+        self._max_processing_errors: int = max_processing_errors
+        self._sample: str | None = sample
 
         # Database file
         self._database: Path = database
@@ -407,14 +395,6 @@ class GlobalConfig(Config):
     @log.setter
     def log(self, log: Path | None) -> None:
         self._log = log
-
-    @property
-    def database(self) -> Path | None:
-        return self._database
-
-    @database.setter
-    def database(self, database: Path | None) -> None:
-        self._database = database
 
     @property
     def verbose(self) -> bool:
@@ -455,6 +435,41 @@ class GlobalConfig(Config):
             self.verbose = False
             self.quiet = False
 
+    @property
+    def workers(self) -> int:
+        return self._workers
+
+    @workers.setter
+    def workers(self, workers: int) -> None:
+        self._workers = workers
+
+    @property
+    def max_processing_errors(self) -> int:
+        return self._max_processing_errors
+
+    @max_processing_errors.setter
+    def max_processing_errors(self, max_processing_errors: int) -> None:
+        self._max_processing_errors = max_processing_errors
+
+    @property
+    def sample(self) -> str | None:
+        return self._sample
+
+    @sample.setter
+    def sample(self, sample: str | None) -> None:
+        # -1 is used as an alternative to None in CLI, since --sample requires
+        # an argument, and a plan "--sample" flag doesn't clearly communicate
+        # that the sample is being disabled
+        self._sample = None if sample == '-1' else sample
+
+    @property
+    def database(self) -> Path | None:
+        return self._database
+
+    @database.setter
+    def database(self, database: Path | None) -> None:
+        self._database = database
+
     def log_level(self) -> Literal['verbose', 'quiet', 'silent'] | None:
         """
         Get a string with the selected log mode: verbose, quiet, or silent. If
@@ -473,7 +488,32 @@ class GlobalConfig(Config):
         else:
             return None
 
+    def sample_details(self) -> tuple[bool, bool, int]:
+        """
+        Get information on the sample if that config is set. This returns a
+        tuple with three values:
 
+        - bool: Whether a sample is active.
+        - bool: Whether the sample is randomized.
+        - int: The size of the sample / number of photos.
+
+        If the sample is not active, this returns (False, False, -1)
+
+        :return: A tuple with sample details.
+        """
+
+        # Check if it's disabled
+        if self.sample is None:
+            return False, False, -1
+
+        # If there's a tilde prefix, it's in random mode
+        random = self.sample.startswith('~')
+
+        # Parse the number of the photos (removing the tilde if necessary)
+        return True, random, int(self.sample[1:] if random else self.sample)
+
+
+# noinspection PyUnresolvedReferences
 class GlobalConfigView(ConfigView):
     """
     This is a read-only view of a GlobalConfig record. Attempting to modify its
@@ -485,23 +525,44 @@ class GlobalConfigView(ConfigView):
 
     @property
     def log(self) -> Path | None:
-        return self._config.log  # noqa
-
-    @property
-    def database(self) -> Path | None:
-        return self._config.database  # noqa
+        return self._config.log
 
     @property
     def verbose(self) -> bool:
-        return self._config.verbose  # noqa
+        return self._config.verbose
 
     @property
     def quiet(self) -> bool:
-        return self._config.quiet  # noqa
+        return self._config.quiet
 
     @property
     def silent(self) -> bool:
-        return self._config.silent  # noqa
+        return self._config.silent
+
+    @property
+    def workers(self) -> int:
+        return self._config.workers
+
+    @property
+    def max_processing_errors(self) -> int:
+        return self._config.max_processing_errors
+
+    @property
+    def sample(self) -> str | None:
+        return self._config.sample
+
+    @property
+    def database(self) -> Path | None:
+        return self._config.database
 
     def log_level(self) -> Literal['verbose', 'quiet', 'silent'] | None:
         return self._config.log_level()  # noqa
+
+    def sample_details(self) -> tuple[bool, bool, int]:
+        """
+        Get information on the sample if that config is set.
+
+        :return: A tuple with sample details.
+        """
+
+        return self._config.sample_details()

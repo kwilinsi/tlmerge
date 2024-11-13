@@ -5,7 +5,7 @@ import sys
 
 from .conf import configure_log, CONFIG, parse_cli, write_default_config
 from .db import DB
-from . import run
+from .run import run
 
 _silent: bool = False
 
@@ -33,7 +33,7 @@ async def main():
     log = logging.getLogger(__name__)
 
     # Load the sub-config files
-    n = CONFIG.load_all_config_files(args.project, args)
+    n = await CONFIG.load_all_config_files(args.project, args)
     if n + global_cfg == 0:
         log.info('No config files found')
     elif n == 0:
@@ -52,17 +52,21 @@ async def main():
     # Initialize the database
     await DB.initialize(root_config.database)
 
-    # Run the appropriate task for the user-selected mode
-    asyncio.current_task().set_name(args.mode.capitalize())
-    if args.mode == 'scan':
-        await run.scan(args.project)
-    else:
-        sys.exit(1 if root_config.silent
-                 else f"Invalid execution mode '{args.mode}'")
+    # Run the selected mode
+    try:
+        await run(args.mode, args.project)
+    except Exception as e:  # noqa
+        log.critical(f"Fatal error while running '{args.mode}': {e}",
+                     exc_info=True)
 
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        sys.exit(1 if _silent else 'Keyboard interrupt: terminating')
+    except KeyboardInterrupt as e:
+        sys.exit(1 if _silent else f'Keyboard interrupt: terminating')
+    except BaseException as e:
+        if _silent:
+            sys.exit(1)
+        else:
+            raise

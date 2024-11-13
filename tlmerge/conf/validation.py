@@ -170,6 +170,11 @@ class GlobalConfigModel(BaseConfigModel):
     quiet: bool | None = None
     silent: bool | None = None
 
+    # Execution
+    workers: Annotated[Optional[int], Field(ge=1)] = None
+    max_processing_errors: Annotated[Optional[int], Field(ge=0)] = None
+    sample: str | None = None
+
     # Database
     database: str | None = None
 
@@ -186,14 +191,33 @@ class GlobalConfigModel(BaseConfigModel):
     # Overrides
     overrides: Optional[list[DateOverrideModel | GroupOverrideModel]] = None
 
-    @field_validator('database')
+    @field_validator('sample')  # noqa
+    @classmethod
+    def check_sample(cls, v: str) -> str:
+        # Remove tilde if present
+        samp = v.strip()[1:] if v.strip().startswith('~') else v.strip()
+
+        # Validate: attempt to parse as an integer
+        try:
+            if int(samp) <= 0:
+                raise ValueError()
+        except ValueError:
+            raise ValueError(f'Invalid sample amount "{v}": you must specify '
+                             f'a positive integer (with optional ~ prefix '
+                             f'for randomization) or leave blank to disable')
+
+        return v
+
+    @field_validator('database')  # noqa
     @classmethod
     def database_not_none(cls, v: str) -> str:
-        if not v:
+        if not v or not v.strip():
             raise ValueError("You must specify a database file path if you "
                              "include the database config")
 
         db = Path(v)
+        # Can only validate if it's (1) an absolute path or (2) a relative path
+        # longer than a file name
         if db.is_absolute() or db.parent != Path('.'):
             if not db.is_absolute():
                 db = db.resolve()
@@ -225,15 +249,20 @@ class GlobalConfigModel(BaseConfigModel):
     @model_validator(mode='after')
     def check_dates_groups(self) -> Self:
         # Dates
-        for d in self.include_dates:
-            validate_date(d)
-        for d in self.exclude_dates:
-            validate_date(d)
+        if self.include_dates:
+            for d in self.include_dates:
+                validate_date(d)
+        if self.exclude_dates:
+            for d in self.exclude_dates:
+                validate_date(d)
 
         # Groups
-        for group in self.include_groups:
-            validate_group(group, None)
-        for group in self.exclude_groups:
-            validate_group(group, None)
+        if self.include_groups:
+            for group in self.include_groups:
+                validate_group(group, None)
+
+        if self.exclude_groups:
+            for group in self.exclude_groups:
+                validate_group(group, None)
 
         return self

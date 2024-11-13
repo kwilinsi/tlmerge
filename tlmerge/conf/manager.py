@@ -200,9 +200,9 @@ class ConfigManager:
         # Return whether a global config file was used
         return applied_config_file
 
-    def load_all_config_files(self,
-                              project: Path,
-                              args: Namespace | None = None) -> int:
+    async def load_all_config_files(self,
+                                    project: Path,
+                                    args: Namespace | None = None) -> int:
         """
         Load all the sub-config files in the project directory. This is every
         config file except for the global one, which should have already been
@@ -228,7 +228,7 @@ class ConfigManager:
         from tlmerge.scan import iterate_date_dirs, iterate_group_dirs
 
         # Scan each date directory
-        for date_dir in iterate_date_dirs(project, ignore_excluded=True):
+        async for date_dir in iterate_date_dirs(project, ignore_excluded=True):
             found_any_files = False
             file, n = _find_and_apply_config_file(
                 date_dir, self.modifiable_root, date_dir.name
@@ -245,7 +245,8 @@ class ConfigManager:
             cfg = CONFIG.get_modifiable(date_dir.name)
 
             # Scan each group directory within this date
-            for group_dir in iterate_group_dirs(date_dir, ignore_excluded=True):
+            async for group_dir in iterate_group_dirs(date_dir,
+                                                      ignore_excluded=True):
                 file, n = _find_and_apply_config_file(
                     group_dir, cfg, date_dir.name, group_dir.name
                 )
@@ -279,8 +280,6 @@ def _load_config_file(file: Path) -> tuple:
 
     try:
         return tuple(_yaml.load_all(file))
-    except KeyboardInterrupt:
-        raise
     except Exception as e:
         raise ValueError(f'Invalid/unparseable config file "{file}": '
                          f'{e.__class__.__name__}: {e}')
@@ -376,6 +375,14 @@ def _apply_root_config(document,
         config.quiet = document['quiet']
     if 'silent' in document:
         config.silent = document['silent']
+
+    # Execution
+    if 'workers' in document:
+        config.workers = document['workers']
+    if 'max_processing_errors' in document:
+        config.max_processing_errors = document['max_processing_errors']
+    if 'sample' in document:
+        config.sample = document['sample']
 
     # Database
     if 'database' in document:
@@ -555,17 +562,35 @@ def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
     if hasattr(args, 'silent'):
         config.silent = args.silent
 
+    # Execution
+    if hasattr(args, 'workers'):
+        config.workers = args.workers
+    if hasattr(args, 'max_processing_errors'):
+        config.max_processing_errors = args.max_processing_errors
+    if hasattr(args, 'sample'):
+        config.sample = args.sample
+
     # Database
     if hasattr(args, 'database'):
         config.database = args.database
 
 
-def write_default_config(file: Path):
+def write_default_config(file: Path) -> None:
+    """
+    Save the default (global) config settings to the given file.
+
+    :param file: The output file path.
+    :return: None
+    """
+
     _yaml.dump({
         'log': 'tlmerge.log',
         'verbose': False,
         'quiet': False,
         'silent': False,
+        'workers': 20,
+        'max_processing_errors': 5,
+        'sample': None,
         'database': DEFAULT_DATABASE_FILE,
         'include_dates': [],
         'exclude_dates': [],

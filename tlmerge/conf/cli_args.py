@@ -23,7 +23,7 @@ def _build_parser() -> ArgumentParser:
     # The running mode
     parser.add_argument(
         'mode',
-        choices=['scan'],
+        choices=['scan', 'preprocess'],
         help='Select an execution mode to process the timelapse images.'
     )
 
@@ -61,6 +61,49 @@ def _build_parser() -> ArgumentParser:
         action='store_true',
         help="If the global config file doesn't already exist, create it"
              "using the default configuration"
+    )
+
+    #################### EXECUTION ####################
+
+    parser.add_argument(
+        '--workers',
+        metavar='NUM',
+        type=int,
+        default=SUPPRESS,
+        help="The number of concurrent asyncio workers to use when running "
+             "many processes (e.g. processing or preprocessing individual "
+             "photos). Must be at least 1. Defaults to 20."
+    )
+
+    parser.add_argument(
+        '--max_processing_errors',
+        metavar='NUM',
+        type=int,
+        default=SUPPRESS,
+        help="This is the maximum number of errors that are allowed while "
+             "working with many workers. For example, when preprocessing all "
+             "the timelapse photos, this is the maximum number of photos that "
+             "can encounter errors before the program will halt. This allows "
+             "the program to recover from one or two malformed photos and "
+             "still process the rest of them. Note that errors are always "
+             "logged. Set this to 0 to halt as soon as a single task fails. "
+             "This only applies to errors encountered while using worker pools "
+             "with 1 or more workers, not all errors during program execution. "
+             "Defaults to 5."
+    )
+
+    parser.add_argument(
+        '--sample',
+        metavar='[~]NUM',
+        type=str,
+        default=SUPPRESS,
+        help="When scanning or processing photos, only process the this many "
+             "photo files as a way to preview everything to make sure it's "
+             "working properly. Prefix the number with a tilde (~) to randomly "
+             "select photos to sample instead of always sampling the first "
+             "ones. (Randomization is done with a reasonable best-effort "
+             "approach that avoids significant compromises to the speed). Use "
+             "-1 to disable a sample enabled in the config file."
     )
 
     #################### LOGGING CONTROLS ####################
@@ -156,6 +199,7 @@ def _build_parser() -> ArgumentParser:
     parser.add_argument(
         '--group_ordering',
         choices=['abc', 'natural', 'num'],
+        default=SUPPRESS,
         help="Specify the order in which to process groups. Use 'natural' to "
              "use the natural sort order for strings. Use 'abc' to for an "
              "intuitive order with a/b/c groups: 'a', 'b', ..., 'y', 'z', "
@@ -239,15 +283,13 @@ def _resolve_file_path(args: Namespace,
             # Otherwise, if the user gave a path like "foobar/something.txt"
             # or "../file.tlmerge" resolve relative to the CWD
             path = path.resolve()
-    except KeyboardInterrupt:
-        raise
     except Exception as e:
-        _exit(args, f'Invalid {name} file "{path}". '
-                    f'{e.__class__.__name__}: {e}')
+        sys.exit(f'Invalid {name} file "{path}". '
+                 f'{e.__class__.__name__}: {e}')
 
     # Ensure that the file isn't a directory
     if path.is_dir():
-        _exit(args, f'Invalid {name} file: "{path}" is a directory')
+        sys.exit(f'Invalid {name} file: "{path}" is a directory')
 
     # Return the absolute path
     return path
@@ -269,7 +311,7 @@ def _validate(args: Namespace) -> None:
     try:
         validate_log_level(args.verbose, args.quiet, args.silent)
     except ValueError as e:
-        _exit(args, str(e))
+        sys.exit(str(e))
 
     # Resolve and validate the timelapse project directory
     try:
@@ -278,16 +320,14 @@ def _validate(args: Namespace) -> None:
 
         # Ensure it's a directory
         if not args.project.exists():
-            _exit(args, "Invalid timelapse project directory: "
-                        f"\"{args.project}\" doesn't exist")
+            sys.exit("Invalid timelapse project directory: "
+                     f"\"{args.project}\" doesn't exist")
         elif not args.project.is_dir():
-            _exit(args, "Invalid timelapse project directory: "
-                        f"\"{args.project}\" isn't a directory")
-    except KeyboardInterrupt:
-        raise
+            sys.exit("Invalid timelapse project directory: "
+                     f"\"{args.project}\" isn't a directory")
     except Exception as e:
-        _exit(args, f'Invalid timelapse project directory: '
-                    f'"{args.project}". {e.__class__.__name__}: {e}')
+        sys.exit(f'Invalid timelapse project directory: '
+                 f'"{args.project}". {e.__class__.__name__}: {e}')
 
     # Resolve the config file path
     args.config = _resolve_file_path(
@@ -314,19 +354,28 @@ def _validate(args: Namespace) -> None:
             'log'
         )
 
+    # Make sure the 'sample' is an integer possibly prefixed with ~
+    if hasattr(args, 'sample'):
+        p = args.sample[1:] if args.sample.startswith('~') else args.sample
+        try:
+            i = int(p)
+            if i == 0 or i < -1 or (p == '~-1'):  # Must be positive or -1
+                raise ValueError()
+        except ValueError:
+            sys.exit(f'Invalid sample amount \"{args.sample}\": '
+                     'must be a positive integer with optional ~ prefix '
+                     'for randomization (or -1 to disable)')
 
-def _exit(args: Namespace, msg: str) -> None:
-    """
-    Call sys.exit() to immediately exit the program with the given error
-    message. Note that if the silent flag is enabled, the message is omitted.
-    Either way, the program exits with error code 1.
+    # The worker count must be positive
+    if hasattr(args, 'workers') and args.workers < 1:
+        sys.exit(f'Invalid number of workers "{args.workers}": '
+                 f'must have at least 1')
 
-    :param args: The parsed command line arguments.
-    :param msg: The message to print.
-    :return: None
-    """
-
-    sys.exit(1 if args.silent else msg)
+    # The max error count must be positive
+    if hasattr(args, 'max_processing_errors') and \
+            args.max_processing_errors < 0:
+        sys.exit(f"Invalid maximum processing errors "
+                 f"\"{args.max_processing_errors}\": can't be negative")
 
 
 def parse_cli() -> Namespace:
