@@ -7,7 +7,7 @@ from PIL import Image
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import DB, Camera, Lens, Photo
-from tlmerge.scan import iterate_all_photos
+from tlmerge.scan import Scanner
 from .async_worker_pool import AsyncWorkerPool, AsyncPoolExceptionGroup
 
 _log = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ async def preprocess(project: Path) -> None:
         async with AsyncWorkerPool(workers=cfg.workers,
                                    max_errors=cfg.max_processing_errors,
                                    results=photo_queue) as pool:
-            async for p in iterate_all_photos(project):
+            async for p in Scanner().iter_all_photos():
                 pool.add(preprocess_photo(p))
     except AsyncPoolExceptionGroup as exc_pool:
         # Log the error(s)

@@ -2,324 +2,451 @@ import asyncio
 from collections.abc import Callable, Generator
 from datetime import date, datetime
 import logging
-import math
-import os
 from pathlib import Path
 from random import shuffle
-from typing import Optional
 
-from tlmerge.conf import CONFIG
+from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
 
 _log = logging.getLogger(__name__)
 
 
-async def iterate_date_dirs(project: Path, *,
-                            ignore_excluded: bool = False,
-                            order: bool = False) -> Generator[Path, None, None]:
+async def _iter(root: Path,
+                excluded: list[str],
+                get_dirs: bool = True,
+                map_func: Callable[[str], any] | None = None) -> \
+        Generator[tuple[Path, any], None, None]:
     """
-    Iterate over all the directories in the project root that match the date
-    format. These are the date directories, which contain groups, which contain
-    photos.
+    Iterate over all items in a given directory, yielding the files or
+    directories as required.
 
-    :param project: The root project directory.
-    :param ignore_excluded: Whether to ignore the configuration that could
-     otherwise exclude certain dates.
-    :param order: Whether to iterate over the dates chronologically. This is
-     ignored if the sample config is enabled and randomized. This is forced if
-     the sample is enabled and NOT randomized.
-    :return: A generator yielding paths to matching date directories.
+    :param root: The root directory to scan. Scanning is not recursive.
+    :param excluded: A list of any names of any items to exclude. (These
+     are strictly file/directory names, not full paths).
+    :param get_dirs: Whether to get directories (True) or files (False).
+     Defaults to True.
+    :param map_func: This is an optional mapping function to apply to the name
+     of each item (file/directory) that doubles as a filter. If this returns
+     False or throws a ValueError for an item, that item is omitted. Any
+     other values besides False are considered a pass. Note that other
+     Exceptions are not caught.
+    :return: A generator yielding paths to matching files/directories along with
+     the result of the name_filter evaluation, if such a filter was used.
     """
 
-    dirs: list[tuple[date, Path]] = []
-    cfg = CONFIG.root
+    f = None
 
-    # Get the date format from root/global config
-    date_format = cfg.date_format
-
-    # Determine which (if any) dates to exclude
-    if ignore_excluded:
-        excluded_dates = []
-    else:
-        excluded_dates = CONFIG.root.get_excluded_dates()
-
-    # Check whether a sample is active
-    sample, s_random, _ = cfg.sample_details()
-
-    # Iterate over everything in the project root
-    for directory in await asyncio.to_thread(project.iterdir):
-        # Make sure it's a directory
-        if not directory.is_dir():
+    # Iterate over everything in the root directory
+    for path in await asyncio.to_thread(root.iterdir):
+        # Make sure it's a file/directory as required
+        if get_dirs:
+            if not path.is_dir():
+                continue
+        elif not path.is_file():
             continue
 
         # If explicitly excluded, skip it
-        if directory.name in excluded_dates:
+        if path.name in excluded:
             continue
 
-        # Ensure it matches the date format
-        try:
-            dt = datetime.strptime(directory.name, date_format)
-        except ValueError:
-            continue
-
-        # Either collect the dates (if ordering them or using a sample)
-        # or yield them here
-        if order or sample:
-            dirs.append((dt, directory))
-        else:
-            yield directory
-
-    # Shuffle/sort based on sample mode and whether to order
-    if s_random:
-        shuffle(dirs)
-        for _, d in dirs:
-            yield d
-    elif order or sample:
-        for _, d in sorted(dirs, key=lambda k: k[0]):
-            yield d
-
-
-async def iterate_group_dirs(date_dir: Path, *,
-                             ignore_excluded: bool = False,
-                             order: bool = False) -> \
-        Generator[Path, None, None]:
-    """
-    Iterate over all the group directories within a particular date in a
-    project.
-
-    :param date_dir: The path to the date directory, which contains zero or
-     more groups.
-    :param ignore_excluded: Whether to ignore configurations that could
-    otherwise exclude certain groups.
-    :param order: Whether to iterate over the groups in order based on the
-     group_ordering.
-    :return: A generator yielding paths to matching groups.
-    """
-
-    # Get the Config record specific to this date
-    cfg = CONFIG[date_dir.name]
-
-    # Get the group ordering policy from the root/global config
-    group_ordering = cfg.group_ordering
-
-    # Determine which (if any) groups to exclude
-    if ignore_excluded:
-        excluded_groups = []
-    else:
-        excluded_groups = cfg.get_excluded_groups(date_dir.name)
-
-    # Check whether a sample is active
-    sample, s_random, _ = CONFIG.root.sample_details()
-
-    # Get every non-excluded directory
-    directories = [d for d in await asyncio.to_thread(date_dir.iterdir)
-                   if d.is_dir() and not d.name in excluded_groups]
-
-    if group_ordering == 'num':
-        # In 'num' mode, only include directories that can be parsed as floats
-        def is_float(directory: Path):
+        # Ensure it passes the filter, if given
+        if map_func is not None:
             try:
-                float(directory.name)
-                return True
-            except ValueError:
-                return False
-
-        gen = _iterate_group_helper(
-            directories, order, sample, s_random,
-            lambda d: (float(d.name), d), filter_func=is_float,
-        )
-    elif group_ordering == 'abc':
-        # In 'abc' mode, only include directories that contain exclusively
-        # letters (no digits, spaces, punctuation, etc.). Sort order is
-        # determined first by length (ascending) and then alphabetical
-        # (ignoring case).
-        gen = _iterate_group_helper(
-            directories, order, sample, s_random,
-            lambda d: (len(d.name), d.name.lower()),
-            filter_func=lambda d: d.name.isalpha(),
-        )
-    elif group_ordering == 'natural':
-        # In 'natural' ordering mode, yield everything
-        gen = _iterate_group_helper(
-            directories, order, sample, s_random, lambda d: d.name
-        )
-    else:
-        raise RuntimeError(f'Unsupported group ordering "{group_ordering}"')
-
-    # Now yield everything
-    for d in gen:
-        yield d
-
-
-def _iterate_group_helper(
-        directories: list[Path],
-        order: bool,
-        sample: bool,
-        s_random: bool,
-        sort_key,
-        filter_func: Optional[Callable[[Path], bool]] = None) -> \
-        Generator[Path, None, None]:
-    """
-    Helper function for iterate_group_dirs() that handles shuffling/sorting a
-    list of paths and yielding only some in sample mode.
-
-    :param directories: The initial list of directory paths.
-    :param order: Whether the list of directories should be ordered.
-    :param sample: Whether we're in sample mode.
-    :param s_random: Whether the sample is randomized (must be False if not in
-     sample mode).
-    :param sort_key: The sort key to pass to sorted() (ignored if not sorting).
-    :param filter_func: A filter function to apply to each directory. If the
-     function returns False, the directory is excluded. If None, no filter is
-     applied, and the filter_value is ignored. Defaults to None.
-    :return: A generator yielding the correct number of directory paths in the
-     correct order.
-    """
-
-    # Apply filter function if necessary
-    if filter_func is not None:
-        if order or sample:
-            # Replace with a filtered list
-            directories = [d for d in directories if filter_func(d)]
-        else:
-            # Order doesn't matter, so yield everything matching filter
-            yield from (d for d in directories if filter_func(d))
-
-    if s_random:
-        # In random sample mode, shuffle the directories
-        shuffle(directories)
-    elif order or sample:
-        # In non-random sample mode or if explicitly ordered, sort the dirs
-        yield from sorted(directories, key=sort_key)
-        return
-
-    yield from directories
-
-
-async def iterate_all_photos(project: Path,
-                             order: bool = False,
-                             log_summary: bool = True) -> \
-        Generator[Path, None, None]:
-    """
-    Get a generator that iterates over every photo in the timelapse project.
-
-    :param project: The root project directory.
-    :param order: Iterate over the photos in order.
-    :param log_summary: Whether to log summary statistics.
-    :return: A generator that yields a path to each photo.
-    """
-
-    # Initialize counters. (These aren't used if the log summary is disabled).
-    dates, groups, photos = 0, 0, 0
-
-    date_dirs = [d async for d in iterate_date_dirs(project, order=order)]
-
-    # Check whether a sample is active. If it's a random sample with a size
-    # greater than 1, check the number of date_dirs in order to get a (roughly)
-    # stratified sample across dates
-    sample, s_random, s_size = CONFIG.root.sample_details()
-    photos_per_date, photos_per_group = None, None
-    if s_random and s_size > 1:
-        photos_per_date = int(math.ceil(s_size / len(date_dirs)))
-
-    # Iterate through each date directory
-    for date_dir in date_dirs:
-        date_photo_counter = 0
-        dates += 1
-
-        # Get all the groups in this date directory
-        group_dirs = [g async for g
-                      in iterate_group_dirs(date_dir, order=order)]
-
-        # In a randomized sample, check the number of group_dirs to (roughly)
-        # stratify the sampling of photos
-        if photos_per_date is not None and photos_per_date > 1:
-            photos_per_group = int(math.ceil(photos_per_date / len(group_dirs)))
-            print('photos per group:', photos_per_group)
-
-        # Then through each group directory
-        for group_dir in group_dirs:
-            group_photo_counter = 0
-            groups += 1
-
-            # Get all photo paths
-            photo_paths = await asyncio.to_thread(group_dir.iterdir)
-
-            # Sort or shuffle if necessary
-            if s_random:
-                photo_paths = list(photo_paths)
-                shuffle(photo_paths)
-            elif order or sample:
-                photo_paths = sorted(photo_paths)
-
-            # And then each photo
-            for photo in photo_paths:
-                # Ignore directories
-                if not photo.is_file():
+                f = map_func(path.name)
+                if f is False:
                     continue
+            except ValueError:
+                # ValueError is also considered failing the filter
+                continue
 
-                photos += 1
-                group_photo_counter += 1
-                date_photo_counter += 1
-                yield photo
+        # Yield the path
+        yield path, f
 
-                # In sample mode, check the counts to possible exit
-                if sample:
-                    # Check the total photo count
-                    if photos == s_size:
+
+class Scanner:
+    def __init__(self,
+                 scan_all: bool = False,
+                 order: bool = False):
+        """
+        Initialize a Scanner, which iterates through dates, groups, and photos
+        in the timelapse project directory.
+
+        :param scan_all: Whether to scan everything. If True, the configurations
+         for ignored dates, directories, and photos, are all ignored, as well as
+         the sample settings. This is useful for initially locating all the
+         config files.
+        :param order: Whether to yield files and directories in order. (This
+         will make it slower).
+        """
+
+        self.scan_all = scan_all
+        self.order = order
+
+    async def iter_dates(self) -> Generator[Path, None, None]:
+        """
+        Iterate over all the directories in the project root that match the date
+        format. These are the date directories, which contain groups, which
+        contain photos.
+
+        :return: A generator yielding paths to matching date directories.
+        """
+
+        cfg = CONFIG.root
+
+        # Get the date format from root/global config
+        date_format = cfg.date_format
+
+        # Determine which (if any) dates to exclude and whether to sample
+        if self.scan_all:
+            excluded_dates = []
+            sample, s_random = False, False
+        else:
+            excluded_dates = CONFIG.root.get_excluded_dates()
+            sample, s_random, _ = cfg.sample_details()
+
+        ##################################################
+
+        # Generator that retrieves all the date directories
+        generator = _iter(
+            cfg.project,
+            excluded_dates,
+            map_func=lambda n: datetime.strptime(n, date_format)
+        )
+
+        # If order doesn't matter, just yield directly from the generator
+        if not sample and not self.order:
+            async for directory, _ in generator:
+                yield directory
+            return
+
+        # Otherwise, collect all directories in a list along with their parsed
+        # date value
+        directories: list[tuple[Path, date]] = []
+        async for directory, dt in generator:
+            directories.append((directory, dt))
+
+        # Shuffle/sort based on sample mode and whether to order
+        if s_random:
+            shuffle(directories)
+            for directory, _ in directories:
+                yield directory
+        else:
+            # Sort by the datetime to yield in chronological order
+            for directory, _ in sorted(directories, key=lambda entry: entry[1]):
+                yield directory
+
+    async def iter_groups(self, date_dir: Path) -> Generator[Path, None, None]:
+        """
+        Iterate over all the directories in a particular date directory. These
+        are the group directories, which contain photos.
+
+        :return: A generator yielding paths to matching group directories.
+        """
+
+        # Get the Config record specific to this date
+        cfg = CONFIG[date_dir.name]
+
+        # Get the group ordering policy from the root/global config
+        group_ordering = cfg.group_ordering
+
+        # Determine which (if any) groups to exclude and whether to sample
+        if self.scan_all:
+            excluded_groups = []
+            sample, s_random = False, False
+        else:
+            excluded_groups = cfg.get_excluded_groups(date_dir.name)
+            sample, s_random, _ = CONFIG.root.sample_details()
+
+        ##################################################
+
+        # Get a mapping function based on the group ordering policy. The
+        # lambdas accept the group directory names, returning False or raising
+        # ValueError to exclude them
+        if group_ordering == 'num':
+            map_func = lambda n: float(n)
+        elif group_ordering == 'abc':
+            map_func = lambda n: n.isalpha()
+        elif group_ordering == 'natural':
+            map_func = None
+        else:
+            raise RuntimeError(f'Unsupported group ordering "{group_ordering}"')
+
+        # Get a generator that retrieves all the group directories
+        generator = _iter(date_dir, excluded_groups, map_func=map_func)
+
+        ##################################################
+
+        # If order doesn't matter, just yield directly from the generator
+        if not sample and not self.order:
+            async for directory, _ in generator:
+                yield directory
+            return
+
+        # If it's a randomized sample, shuffle first, and then yield
+        if s_random:
+            directories = [d async for d, _ in generator]
+            shuffle(directories)
+            for d in directories:
+                yield d
+            return
+
+        # Otherwise, get a sort key sort based on the group ordering policy.
+        # Each is a lambda that accepts an entry e = (path, mapped_value)
+        if group_ordering == 'num':
+            sort_key = lambda e: (e[1], e[0])
+        elif group_ordering == 'abc':
+            sort_key = lambda e: (len(e[0].name), e[0].name.lower())
+        else:
+            sort_key = lambda e: e[0].name
+
+        # Now sort and yield the directories
+        for d, _ in sorted([entry async for entry in generator], key=sort_key):
+            yield d
+
+    async def iter_photos(
+            self,
+            group_dir: Path,
+            randomize: bool = False) -> Generator[Path, None, None]:
+        """
+        Iterate over all the photos in a particular group directory.
+
+        :param group_dir: The group directory containing the photos to retrieve.
+        :param randomize: Whether to randomize the order in which the photos
+         are returned. This overrides `self.order` if True. Defaults to False.
+        :return: A generator yielding paths to matching photo files.
+        """
+
+        # Determine which (if any) photos to exclude and whether to sample
+        if self.scan_all:
+            excluded_photos = []
+        else:
+            # TODO add config option for excluding individual photos
+            excluded_photos = []
+
+        ##################################################
+
+        # Get a generator that retrieves all the photo files (making sure not
+        # to include config files)
+        generator = _iter(
+            group_dir,
+            excluded_photos,
+            get_dirs=False,
+            map_func=lambda n: n != DEFAULT_CONFIG_FILE
+        )
+
+        # If order doesn't matter, just yield directly from the generator
+        if not randomize and not self.order:
+            async for directory, _ in generator:
+                yield directory
+            return
+
+        # Otherwise, transfer generator to a list
+        photos = [d async for d, _ in generator]
+
+        # If randomized, shuffle. Otherwise, sort
+        if randomize:
+            shuffle(photos)
+            for d in photos:
+                yield d
+        else:
+            for d in sorted(photos):
+                yield d
+
+    async def iter_all_photos(
+            self,
+            log_summary: bool = True) -> Generator[Path, None, None]:
+        """
+        Get a generator that iterates over every photo in the timelapse project.
+
+        :param log_summary: Whether to log summary statistics.
+        :return: A generator that yields a path to each photo.
+        """
+
+        cfg = CONFIG.root
+
+        # If not scanning all the photos, check whether a sample is active
+        if self.scan_all:
+            sample, s_size = False, None
+        else:
+            sample, s_random, s_size = cfg.sample_details()
+
+            # If randomly sampling, defer to the randomized iterator
+            if s_random:
+                async for p in self.iter_all_photos_random(s_size, log_summary):
+                    yield p
+                return
+
+        # Initialize counters (only used if the log summary is enabled)
+        dates, groups, photos = 0, 0, 0
+
+        ##################################################
+
+        # Iterate over each date
+        async for date_dir in self.iter_dates():
+            date_photo_counter, dates = 0, dates + 1
+
+            # Iterate over each group
+            async for group_dir in self.iter_groups(date_dir):
+                group_photo_counter, groups = 0, groups + 1
+
+                # Iterate over each photo
+                async for photo in self.iter_photos(group_dir):
+                    yield photo
+                    photos += 1
+                    group_photo_counter += 1
+
+                    # If this reached the sample size, exit
+                    if sample and photos >= s_size:
                         if log_summary:
-                            _log.debug(
-                                f"Got complete sample of {photos} "
-                                f"photo{'' if photos == 1 else 's'} from "
-                                f"{dates} date{'' if dates == 1 else 's'} and "
-                                f"{groups} group{'' if groups == 1 else 's'}"
-                            )
+                            msg = (f"Got deterministic sample of {photos} "
+                                   f"photo{'' if photos == 1 else 's'} from ")
+                            if groups == 1:
+                                msg += str(cfg.rel_path(group_dir))
+                            elif dates == 1:
+                                msg += f"{groups} groups in {date_dir.name}"
+                            else:
+                                msg += f"{groups} groups in {dates} dates"
+                            _log.info(msg)
                         return
-                    # Check the number of photos for this group
-                    if group_photo_counter == photos_per_group or \
-                            date_photo_counter == photos_per_date:
-                        break
 
-            # In sample mode, check if enough photos were captured for this
-            # date. Otherwise, check log summary stats. (Don't do both, because
-            # this log message would be confusing in sample mode).
-            if sample:
-                if photos_per_date is not None and \
-                        date_photo_counter == photos_per_date:
-                    break
-            elif log_summary:
+                # Log summary stats for this group, if enabled
+                if log_summary:
+                    _log.debug(
+                        f"Group: found {group_photo_counter} "
+                        f"photo{'' if group_photo_counter == 1 else 's'} "
+                        f"in {cfg.rel_path(group_dir)}"
+                    )
+
+            # Log summary stats for this date, if enabled
+            if not sample and log_summary:
                 _log.debug(
-                    f"Group: found {group_photo_counter} "
-                    f"photo{'' if group_photo_counter == 1 else 's'} "
-                    f"in .{os.sep}{group_dir.relative_to(project)}"
+                    f"Date: found {date_photo_counter} "
+                    f"photo{'' if date_photo_counter == 1 else 's'} "
+                    f"in {cfg.rel_path(date_dir)}"
                 )
 
-        # Log summary stats for this date, if enabled and not in sample mode
-        if not sample and log_summary:
-            _log.debug(
-                f"Date: found {date_photo_counter} "
-                f"photo{'' if date_photo_counter == 1 else 's'} "
-                f"in .{os.sep}{date_dir.relative_to(project)}"
+        # Overall summary stats
+        if log_summary:
+            _log.info(
+                f"Found a total of {dates} date{'' if dates == 1 else 's'} "
+                f"containing {groups} group{'' if groups == 1 else 's'} "
+                f"and {photos} photo{'' if photos == 1 else 's'}"
             )
 
-    if log_summary:
-        _log.info(f"Found a total of {dates} date{'' if dates == 1 else 's'} "
-                  f"containing {groups} group{'' if groups == 1 else 's'} "
-                  f"and {photos} photo{'' if photos == 1 else 's'}")
+    async def iter_all_photos_random(
+            self,
+            sample_size: int | None,
+            log_summary: bool = True) -> Generator[Path, None, None]:
+        """
+        Iterate over all photos in the timelapse project directory in a random
+        order, up to the stated sample size.
 
+        In the interest of not using excessive memory or time, this isn't
+        totally random. It roughly performs a stratified sampling over each
+        date, from which it exhausts each group one at a time in a random
+        order.
 
-async def scan(project: Path) -> None:
-    """
-    Scan all the files in the timelapse directory to log summary statistics
-    on the number of photos. This is a blocking operation with long IO delays.
+        The fewer dates there are, the less random this will seem, especially if
+        those dates contain groups with many photos each. (However, there are
+        some edge cases. For example, with one date containing one group, or
+        one date whose n groups each contain one photo, this is a perfectly
+        pseudo-random selection).
 
-    :param project: The path to the project directory.
-    :return: None
-    """
+        :param sample_size: The desired number of photos. If this is None or
+         there aren't enough photos to reach this sample size, all photos are
+         returned.
+        :param log_summary: Whether to log some summary messages.
+        :return: A generator that yields paths to random photos.
+        """
 
-    _log.info(f'Scanning timelapse project "{project}" '
-              '(this may take some time)')
+        # Count the number of photos yielded to stop at the sample size
+        counter = 0
 
-    # Scan through the photos. Ordered so the log messages look better
-    async for _ in iterate_all_photos(project, order=True):
-        # The generator logs summary stats; no need to do anything here
-        pass
+        # Get all the date directories. Make sure there's at least one
+        date_dir_queue = [d async for d in self.iter_dates()]
+
+        # This list stores a tuple for each date directory. Each tuple contains
+        # two elements:
+        # 1. A list of all photos that haven't yet been yielded from one of the
+        #    groups.
+        # 2. A list of group directories that haven't yet been indexed.
+        # When the photo list is exhausted, it's replaced with a list of photos
+        # from the next group directory.
+        group_dirs: list[tuple[list[Path], list[Path]]] = []
+
+        # This index is the active position in group_dirs
+        g = 0
+
+        # Continue yielding photos until reaching the sample size
+        while sample_size is None or counter < sample_size:
+            # If there are more date directories we haven't indexed yet, we can
+            # open them here. However, if there are already enough groups
+            # available to select just 1 photo from each remaining groups, skip
+            # this step. This will run at least once the first time the main
+            # loop runs, as group_dirs is initially empty
+            while len(date_dir_queue) > 0 and \
+                    (sample_size is None or
+                     len(group_dirs) < sample_size - counter):
+                group_dirs.append((
+                    [],
+                    [g async for g in self.iter_groups(date_dir_queue.pop())]
+                ))
+
+            # If the group index reached the end of the list of groups, go back
+            # to the first one
+            if g >= len(group_dirs):
+                if g == 0:
+                    # We still need more photos, but there aren't any groups
+                    # left to scan. First log a message (if enabled), then exit
+                    if log_summary:
+                        if counter == 0 and sample_size is None:
+                            _log.warning("Couldn't find any photos at all.")
+                        elif counter == 0:
+                            _log.warning(
+                                "Couldn't find any photos at all. "
+                                f"Unable to sample {sample_size} random "
+                                f"photo{'' if sample_size == 1 else 's'}"
+                            )
+                        elif sample_size is None:
+                            _log.info(
+                                f"Randomly sampled {counter} "
+                                f"photo{'' if sample_size == 1 else 's'}"
+                            )
+                        else:
+                            _log.warning(
+                                f"Randomly sampled {counter} "
+                                f"photo{'' if sample_size == 1 else 's'}. "
+                                f"Unable to meet desired sample size "
+                                f"{sample_size} "
+                                f"photo{'' if sample_size == 1 else 's'}"
+                            )
+                    return
+                else:
+                    g = 0
+
+            # Get a photo from the next group
+            photos, groups = group_dirs[g]
+            if len(photos) == 0:
+                if len(groups) == 0:
+                    # There are no more groups to scan for this date. All the
+                    # photos have been yielded. Remove it from the list, and
+                    # continue (so g will point to the next entry)
+                    del group_dirs[g]
+                else:
+                    # Load all the photos from the next group
+                    photos = [p async for p in
+                              self.iter_photos(groups.pop(), randomize=True)]
+                    group_dirs[g] = (photos, groups)
+                continue
+
+            # Yield one photo from the active group, and then continue on to
+            # the next group
+            yield photos.pop()
+            counter += 1
+            g += 1
+
+        # Done
+        if log_summary:
+            _log.info(f"Randomly sampled {counter} "
+                      f"photo{'' if sample_size == 1 else 's'}")
+
+        del group_dirs
