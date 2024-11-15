@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from .scan import scan
-from .preprocess import preprocess
+from .preprocess import Preprocessor
 
 _log = logging.getLogger(__name__)
 
@@ -18,6 +18,6 @@ async def run(mode: Literal['scan', 'preprocess'],
     if mode == 'scan':
         await scan(project)
     elif mode == 'preprocess':
-        await preprocess(project)
+        await Preprocessor().run()
     else:
         raise ValueError(f"Invalid execution mode '{mode}'")

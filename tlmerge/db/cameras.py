@@ -4,10 +4,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 # The maximum length of a camera make
-MAX_CAMERA_MAKE_LENGTH = 100
+MAX_CAMERA_MAKE_LENGTH = 75
 
-# The maximum length of a camera name
-MAX_CAMERA_NAME_LENGTH = 100
+# The maximum length of a camera model
+MAX_CAMERA_MODEL_LENGTH = 100
 
 
 class Camera(Base):
@@ -18,7 +18,7 @@ class Camera(Base):
 
     # Location
     make: Mapped[str] = mapped_column(String(MAX_CAMERA_MAKE_LENGTH))
-    name: Mapped[str] = mapped_column(String(MAX_CAMERA_NAME_LENGTH))
+    model: Mapped[str] = mapped_column(String(MAX_CAMERA_MODEL_LENGTH))
 
     # Photo relationship: one-to-many
     photos: Mapped[list["Photo"]] = relationship(  # noqa

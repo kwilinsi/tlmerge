@@ -64,7 +64,7 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt as e:
-        sys.exit(1 if _silent else f'Keyboard interrupt: terminating')
+        sys.exit(1 if _silent else 'Keyboard interrupt: terminating')
     except BaseException as e:
         if _silent:
             sys.exit(1)

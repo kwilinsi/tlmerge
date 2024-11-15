@@ -58,11 +58,14 @@ class Photo(Base):
     time_taken: Mapped[datetime] = mapped_column(DateTime())
     file_size: Mapped[int] = mapped_column(Integer())  # in kilobytes
     iso: Mapped[int | None] = mapped_column(Integer())
-    shutter_speed: Mapped[float | None] = mapped_column(Float())
+    shutter_speed: Mapped[str | None] = mapped_column(Float())  # a/b
     aperture: Mapped[float | None] = mapped_column(Float())  # f/[#]
     focal_length: Mapped[float | None] = mapped_column(Float())  # mm
     embedded_icc_profile: Mapped[bool | None] = mapped_column(Boolean())
     num_raw_images: Mapped[int | None] = mapped_column(Integer())
+    auto_focus: Mapped[bool | None] = mapped_column(Boolean())
+    focus_distance: Mapped[float] = mapped_column(Float)  # in meters
+    field_of_view: Mapped[float] = mapped_column(Float)  # in degrees
 
     # Photo size
     width: Mapped[int] = mapped_column(Integer())

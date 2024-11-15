@@ -526,7 +526,7 @@ class GlobalConfig(Config):
         # Parse the number of the photos (removing the tilde if necessary)
         return True, random, int(self.sample[1:] if random else self.sample)
 
-    def rel_path(self, path: Path) -> Path:
+    def rel_path(self, path: Path | str) -> Path:
         """
         Return the given path object relative to the global config project
         directory.
@@ -545,6 +545,8 @@ class GlobalConfig(Config):
          directory.
         """
 
+        if not isinstance(path, Path):
+            path = Path(path)
         return path.relative_to(self.project)
 
 
@@ -603,5 +605,5 @@ class GlobalConfigView(ConfigView):
     def sample_details(self) -> tuple[bool, bool, int]:
         return self._config.sample_details()
 
-    def rel_path(self, path: Path) -> Path:
+    def rel_path(self, path: Path | str) -> Path:
         return self._config.rel_path(path)
