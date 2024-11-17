@@ -66,7 +66,7 @@ class Photo(Base):
     avg_green: Mapped[float] = mapped_column(Float())
     avg_blue: Mapped[float] = mapped_column(Float())
 
-    # Black and white levels (i.e. darkness and saturation in dcraw)
+    # Black and white levels (i.e. darkness and saturation)
     black_level_red: Mapped[float] = mapped_column(Float())
     black_level_green1: Mapped[float] = mapped_column(Float())
     black_level_blue: Mapped[float] = mapped_column(Float())

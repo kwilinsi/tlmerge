@@ -218,8 +218,8 @@ def _build_parser() -> ArgumentParser:
         nargs=4,
         default=SUPPRESS,
         help="White balance multipliers for raw images: red, green, blue, "
-             "green. Defaults to 1.0 for each. See dcraw documentation for "
-             "-r flag."
+             "green. Defaults to 1.0 for each. See LibRaw documentation for "
+             "custom white balance."
     )
 
     parser.add_argument(
@@ -229,7 +229,7 @@ def _build_parser() -> ArgumentParser:
         nargs=2,
         default=SUPPRESS,
         help="Chromatic aberration multipliers for raw images: red and blue. "
-             "Defaults to 1.0 to each. See dcraw documentation for -C flag."
+             "Defaults to 1.0 for each. See LibRaw documentation."
     )
 
     parser.add_argument(
@@ -238,15 +238,14 @@ def _build_parser() -> ArgumentParser:
         type=int,
         default=SUPPRESS,
         help="The number of passes with a 3x3 median filter. Defaults to 0. "
-             "See dcraw documentation for -m flag."
+             "See LibRaw documentation."
     )
 
     parser.add_argument(
         '--dark_frame',
         metavar='FILE',
         default=SUPPRESS,
-        help="An optional dark frame to subtract from raw images. See dcraw "
-             "documentation for -K flag."
+        help="An optional dark frame to subtract from raw images."
     )
 
     return parser

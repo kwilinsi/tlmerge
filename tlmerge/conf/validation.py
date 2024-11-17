@@ -115,7 +115,7 @@ class ChromaticAberrationModel(Base):
 
 
 class BaseConfigModel(Base):
-    # dcraw camera settings
+    # LibRaw camera settings
     white_balance: WhiteBalanceModel | None = None
     chromatic_aberration: ChromaticAberrationModel | None = None
     median_filter: Annotated[Optional[int], Field(ge=0)] = None
