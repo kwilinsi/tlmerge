@@ -6,12 +6,14 @@ from pathlib import Path
 from random import shuffle
 
 from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
+from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
 
 _log = logging.getLogger(__name__)
 
 
 async def _iter(root: Path,
                 excluded: list[str],
+                max_length: int,
                 get_dirs: bool = True,
                 map_func: Callable[[str], any] | None = None) -> \
         Generator[tuple[Path, any], None, None]:
@@ -22,6 +24,9 @@ async def _iter(root: Path,
     :param root: The root directory to scan. Scanning is not recursive.
     :param excluded: A list of any names of any items to exclude. (These
      are strictly file/directory names, not full paths).
+    :param max_length: The maximum length of an item. This is used to ensure
+     compatibility with the database. Any items that pass the map_func but
+     exceed the max_length are skipped and trigger a warning message.
     :param get_dirs: Whether to get directories (True) or files (False).
      Defaults to True.
     :param map_func: This is an optional mapping function to apply to the name
@@ -57,6 +62,14 @@ async def _iter(root: Path,
             except ValueError:
                 # ValueError is also considered failing the filter
                 continue
+
+        # If the name exceeds the max length, skip
+        if len(path.name) > max_length:
+            _log.warning(
+                f'Skipping "{path}", as "{path.name}" exceeds the maximum '
+                f'supported length in the database ({max_length} characters)'
+            )
+            continue
 
         # Yield the path
         yield path, f
@@ -109,6 +122,7 @@ class Scanner:
         generator = _iter(
             cfg.project,
             excluded_dates,
+            MAX_DATE_LENGTH,
             map_func=lambda n: datetime.strptime(n, date_format)
         )
 
@@ -171,7 +185,8 @@ class Scanner:
             raise RuntimeError(f'Unsupported group ordering "{group_ordering}"')
 
         # Get a generator that retrieves all the group directories
-        generator = _iter(date_dir, excluded_groups, map_func=map_func)
+        generator = _iter(date_dir, excluded_groups,
+                          MAX_GROUP_LENGTH, map_func=map_func)
 
         ##################################################
 
@@ -229,6 +244,7 @@ class Scanner:
         generator = _iter(
             group_dir,
             excluded_photos,
+            MAX_PHOTO_NAME_LENGTH,
             get_dirs=False,
             map_func=lambda n: n != DEFAULT_CONFIG_FILE
         )
