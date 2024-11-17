@@ -174,10 +174,14 @@ class PhotoExifRecord:
                                         fmt=False, cast=float)
         photo.field_of_view = self.get('Composite:FOV', fmt=False,
                                        cast=lambda v: float(v.split()[0]))
+        photo.exposure_difference = self.get(
+            'MakerNotes:ExposureDifference', fmt=False, cast=float
+        )
 
         # Photo size
-        photo.width = self.get('EXIF:ImageWidth', opt=False, cast=int)
-        photo.height = self.get('EXIF:ImageHeight', opt=False, cast=int)
+        photo.raw_width = self.get('EXIF:ImageWidth', opt=False, cast=int)
+        photo.raw_height = self.get('EXIF:ImageHeight',
+                                    opt=False, cast=int)
 
         # Camera info
         camera: Camera = photo.camera

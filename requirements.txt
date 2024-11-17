@@ -3,11 +3,13 @@ annotated-types
 coloredlogs
 greenlet
 humanfriendly
+numpy
 pillow
 platformdirs
 pydantic
 pydantic_core
 PyExifTool
+rawpy
 ruamel.yaml
 SQLAlchemy
 typing_extensions

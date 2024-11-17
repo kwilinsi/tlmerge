@@ -4,6 +4,10 @@ import logging
 from pathlib import Path
 from queue import SimpleQueue
 
+import imageio.v3 as iio
+import numpy as np
+import rawpy
+from rawpy import LibRawError, RawPy, ThumbFormat
 from PIL import Image
 
 from tlmerge.conf import CONFIG
@@ -186,11 +190,15 @@ class Preprocessor:
 
         # Create the database record
         photo = Photo()
+        photo.camera = Camera()
+        photo.lens = Lens()
 
-        camera = Camera()
-        photo.camera = camera
-        lens = Lens()
-        photo.lens = lens
+        # Open the photo in rawpy (i.e. libraw) to get some info
+        def run_rawpy():
+            with rawpy.imread(str(file)) as rpy_photo:
+                _apply_libraw_metadata(rpy_photo, photo)
+
+        await asyncio.to_thread(run_rawpy)
 
         # do stuff
         ...
@@ -203,24 +211,114 @@ class Preprocessor:
         return photo
 
 
-async def _apply_exif_info(file: Path, photo: Photo) -> Photo:
+# noinspection DuplicatedCode
+def _apply_libraw_metadata(rpy_photo: RawPy, db_photo: Photo) -> None:
     """
-    Extract the EXIF data from a photo, applying the values to the database
-    Photo record.
+    Given a photo opened by rawpy (i.e. libraw), apply information from it to
+    the database record.
 
-    :param file: The path to the photo file.
-    :param photo: The database Photo record.
-    :return: The same Photo record (for chaining).
+    :param rpy_photo: The photo opened in RawPy.
+    :param db_photo: The database Photo record.
+    :return: None
     """
 
-    img: Image = Image.open(file)
-    exif: Image.Exif = img.getexif()
+    # Get the image crop area size (i.e. not the raw size)
+    sizes = rpy_photo.sizes
+    db_photo.width = sizes.width
+    db_photo.height = sizes.height
 
-    if exif is None:
-        raise ValueError(
-            "Failed to extract EXIF data from "
-            f"{Path(file.parent.parent.name) / file.parent.name / file.name}")
-    else:
-        _log.info(f'Found {len(exif)} EXIF entries for {file}')
+    # Extract the thumbnail to get its size
+    try:
+        thumb = rpy_photo.extract_thumb()
+        if thumb.format == ThumbFormat.JPEG:
+            thumb = iio.imread(thumb.data)
+        elif thumb.format == ThumbFormat.BITMAP:
+            thumb = thumb.data
+        else:
+            raise ValueError(f'Unknown thumbnail format "{thumb.format}"')
+        db_photo.thumb_width, db_photo.thumb_height = thumb.shape[:2]
+    except LibRawError:
+        # Thumbnail size params are optional. If it's not found, that's fine
+        pass
 
-    return photo
+    # Set camera white balance if available
+    cam_wb_r, cam_wb_g1, cam_wb_b, cam_wb_g2 = 1, 1, 1, 1  # Used later
+    try:
+        cam_wb_r, cam_wb_g1, cam_wb_b, cam_wb_g2 = rpy_photo.camera_whitebalance
+        camera: Camera = db_photo.camera
+        camera.wb_red = cam_wb_r
+        camera.wb_green1 = cam_wb_g1
+        camera.wb_blue = cam_wb_b
+        camera.wb_green2 = cam_wb_g2
+    except LibRawError:
+        pass
+
+    # Set photo daylight white balance, if available
+    try:
+        r, g1, b, g2 = rpy_photo.daylight_whitebalance
+        db_photo.daylight_wb_red = r
+        db_photo.daylight_wb_green1 = g1
+        db_photo.daylight_wb_blue = b
+        db_photo.daylight_wb_green2 = g2
+    except LibRawError:
+        pass
+
+    # Set photo black levels (i.e. darkness)
+    r, g1, b, g2 = rpy_photo.black_level_per_channel
+    db_photo.black_level_red = r
+    db_photo.black_level_green1 = g1
+    db_photo.black_level_blue = b
+    db_photo.black_level_green2 = g2
+
+    # Set camera white level (i.e. saturation)
+    camera_wb = rpy_photo.camera_white_level_per_channel
+    if camera_wb is not None:
+        r, g1, b, g2 = camera_wb
+    elif (white_level := rpy_photo.white_level) is not None:
+        # Fall back to white_level only if camera level isn't found. Otherwise,
+        # avoid using this value. See the comment here:
+        # https://github.com/letmaik/rawpy/pull/122#issuecomment-692038349
+        r, g1, b, g2 = (white_level,) * 4
+    db_photo.white_level_red = r
+    db_photo.white_level_green1 = g1
+    db_photo.white_level_blue = b
+    db_photo.white_level_green2 = g2
+
+    # Estimate the average red, green, and blue values by processing a half
+    # size color image (i.e. no interpolation) with no white balance
+    # adjustments and no auto exposure but with the default gamma curve.
+    # This can be used later to calculate grey-world white balance.
+    image = rpy_photo.postprocess(
+        half_size=True, user_wb=[1, 1, 1, 1], no_auto_bright=True
+    )
+    red_channel = image[:, :, 0].ravel()
+    green_channel = image[:, :, 1].ravel()
+    blue_channel = image[:, :, 2].ravel()
+    db_photo.avg_red = np.mean(red_channel)
+    db_photo.avg_green = np.mean(green_channel)
+    db_photo.avg_blue = np.mean(blue_channel)
+
+    # Use the same image to estimate the brightness percentiles. Correct each
+    # RGB value by the default camera white balance multipliers. (Use the
+    # camera multipliers instead of image-specific values to keep things
+    # constant between images from the same camera).
+    brightness = ((red_channel * cam_wb_r +
+                   green_channel * (cam_wb_g1 + cam_wb_g2) / 2 +
+                   blue_channel * cam_wb_b) // 3).astype(np.uint8)
+
+    db_photo.brightness_min = np.min(brightness)
+    db_photo.brightness_max = np.max(brightness)
+    db_photo.brightness_mean = np.mean(brightness)
+    db_photo.brightness_stdev = np.std(brightness)
+    db_photo.brightness_iqr = np.percentile(brightness, 75) - \
+                              np.percentile(brightness, 25)
+
+    percentiles = np.percentile(brightness, np.arange(10, 100, 10))
+    db_photo.brightness_p10 = percentiles[0]
+    db_photo.brightness_p20 = percentiles[1]
+    db_photo.brightness_p30 = percentiles[2]
+    db_photo.brightness_p40 = percentiles[3]
+    db_photo.brightness_median = percentiles[4]
+    db_photo.brightness_p60 = percentiles[5]
+    db_photo.brightness_p70 = percentiles[6]
+    db_photo.brightness_p80 = percentiles[7]
