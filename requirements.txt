@@ -3,6 +3,7 @@ annotated-types
 coloredlogs
 greenlet
 humanfriendly
+imageio
 numpy
 pillow
 platformdirs
