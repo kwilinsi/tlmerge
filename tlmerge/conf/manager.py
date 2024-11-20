@@ -211,9 +211,9 @@ class ConfigManager:
         # Return whether a global config file was used
         return applied_config_file
 
-    async def load_all_config_files(self,
-                                    project: Path,
-                                    args: Namespace | None = None) -> int:
+    def load_all_config_files(self,
+                              project: Path,
+                              args: Namespace | None = None) -> int:
         """
         Load all the sub-config files in the project directory. This is every
         config file except for the global one, which should have already been
@@ -240,7 +240,7 @@ class ConfigManager:
         scanner = Scanner(scan_all=True)
 
         # Scan each date directory
-        async for date_dir in scanner.iter_dates():
+        for date_dir in scanner.iter_dates():
             found_any_files = False
             file, n = _find_and_apply_config_file(
                 date_dir, self.modifiable_root, date_dir.name
@@ -257,7 +257,7 @@ class ConfigManager:
             cfg = CONFIG.get_modifiable(date_dir.name)
 
             # Scan each group directory within this date
-            async for group_dir in scanner.iter_groups(date_dir):
+            for group_dir in scanner.iter_groups(date_dir):
                 file, n = _find_and_apply_config_file(
                     group_dir, cfg, date_dir.name, group_dir.name
                 )

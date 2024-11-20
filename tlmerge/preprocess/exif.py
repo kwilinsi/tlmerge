@@ -1,12 +1,8 @@
-from asyncio import AbstractEventLoop, Event
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
-from queue import SimpleQueue
-from threading import Thread
 
 from exiftool import ExifToolHelper
-from exiftool.exceptions import ExifToolException
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import Camera, Lens, Photo
@@ -29,7 +25,7 @@ def parse_date_time(dt_string: str,
     :param formats: The list of datetime formats to try. The first one that
      matches is used.
     :return: The parsed datetime object.
-    :raises ValueError: If the input string is None, empty, or otherwise
+    :raise ValueError: If the input string is None, empty, or otherwise
      cannot be parsed.
     """
 
@@ -45,22 +41,19 @@ def parse_date_time(dt_string: str,
     raise ValueError(f'Unable to parse datetime string "{dt_string}"')
 
 
-class PhotoExifRecord:
-    def __init__(self, path: Path | str) -> None:
+class ExifData:
+    def __init__(self,
+                 exif_raw: dict[str, any],
+                 exif_fmt: dict[str, any]) -> None:
         """
-        Initialize an EXIF loader record, which helps control the process of
-        batch loading EXIF data from many images.
+        Initialize an EXIF data record with metadata from a photo.
 
-        This includes an asyncio Event, which is fired
-
-        :param path: The path to the image file.
+        :param exif_raw: The raw EXIF data from ExifTool.
+        :param exif_fmt: The EXIF data automatically formatted by ExifTool.
         """
 
-        self.path: str = str(path)
-        self.event: Event = Event()
-        self.exif_raw: dict[str, any] | None = None
-        self.exif_fmt: dict[str, any] | None = None
-        self.exception: ExifToolException | None = None
+        self.exif_raw: dict[str, any] = exif_raw
+        self.exif_fmt: dict[str, any] = exif_fmt
 
     def get(self,
             *tags: str,
@@ -81,8 +74,8 @@ class PhotoExifRecord:
          doesn't exist, this raises a KeyError. Defaults to True.
         :return: The value associated with the tag, or None if it couldn't be
          found and was optional.
-        :raises KeyError: If the tag doesn't exist and is not optional.
-        :raises ValueError: If the casting function fails.
+        :raise KeyError: If the tag doesn't exist and is not optional.
+        :raise ValueError: If the casting function fails.
         """
 
         # Use formatted or raw exif data
@@ -105,8 +98,7 @@ class PhotoExifRecord:
                     if error is None:
                         error = KeyError(
                             f"Mandatory tag {tag} not found in "
-                            f"{'formatted' if fmt else 'raw'} EXIF data "
-                            f"for {CONFIG.root.rel_path(self.path)}"
+                            f"{'formatted' if fmt else 'raw'} EXIF data"
                         )
                     if last_tag:
                         raise error
@@ -133,21 +125,15 @@ class PhotoExifRecord:
 
     def apply_metadata(self, photo: Photo) -> None:
         """
-        Apply the EXIF data to the given database Photo record.
+        Apply this EXIF data to the given database Photo record.
 
         :param photo: The database Photo record.
         :return: None
-        :raises ExifToolException: If there was an error obtaining the EXIF
-         data for this photo.
-        :raises KeyError: If the EXIF data for a mandatory (non-null) column in
+        :raise KeyError: If the EXIF data for a mandatory (non-null) column in
          the database is missing.
-        :raises ValueError: If the EXIF data for a mandatory (non-null) column
+        :raise ValueError: If the EXIF data for a mandatory (non-null) column
          in the database is in an unexpected format/type.
         """
-
-        # If there was an error getting the EXIF data, raise it now
-        if self.exception is not None:
-            raise self.exception
 
         # Capture time
         photo.time_taken = self.get(
@@ -213,15 +199,11 @@ class PhotoExifRecord:
         )
 
 
-class ExifWorker(Thread):
-    def __init__(self,
-                 queue: SimpleQueue[PhotoExifRecord | None],
-                 event_loop: AbstractEventLoop,
-                 worker_num: int) -> None:
+class ExifWorker:
+    def __init__(self) -> None:
         """
-        Initialize an ExifLoader thread. This continuously loads photos from
-        the queue to get their metadata with PyExifTool. It runs until
-        receiving None from the queue, at which point it exits.
+        Initialize an ExifLoader. This opens a connection to ExifTool through
+        PyExifTool until explicitly closed (which is mandatory).
 
         By default, ExifTool tries to make its output user-friendly. For
         example, it changes the file size "15908707" to "16 MB" and the Lens
@@ -243,41 +225,28 @@ class ExifWorker(Thread):
 
         PyExifTool also uses the -G flag by default to specify the tag groups.
         This is retained even in the raw version without -n.
-
-        :param queue: The queue with records to populate with EXIF data.
-        :param event_loop: The event loop on which to set the asyncio.Event for
-         each record in the queue.
-        :param worker_num: The number of this EXIF loader thread. This is just
-         used for setting the thread name in log messages.
         """
-
-        super().__init__(name=f'exif_{worker_num}')
 
         self.exif_raw: ExifToolHelper = ExifToolHelper()  # Default: -G and -n
         self.exif_fmt: ExifToolHelper = ExifToolHelper(common_args=['-G'])
-        self.queue: SimpleQueue[PhotoExifRecord | None] = queue
-        self.event_loop: AbstractEventLoop = event_loop
+        self._is_open: bool = False
 
-    def run(self) -> None:
+    def close(self) -> None:
         """
-        Run this worker. First, this opens the PyExifTool helpers (one with raw
-        output and the other with user-friendly output). Then it repeatedly
-        loads records from the queue to populate with EXIF data.
-
-        When it gets None from the queue, it exits.
+        Close the connections to ExifTool. This does nothing if no connection
+        is currently open.
 
         :return: None
         """
 
-        with self.exif_raw:
-            with self.exif_fmt:
-                while (record := self.queue.get()) is not None:
-                    self._load_metadata(record)
+        if self._is_open:
+            self.exif_raw.terminate()
+            self.exif_fmt.terminate()
+            self._is_open = False
 
-    def _load_metadata(self, record: PhotoExifRecord) -> None:
+    def extract(self, file: Path | str) -> ExifData:
         """
-        Extract metadata from the photo. If there's an error, store the
-        exception.
+        Extract EXIF metadata from the given photo file.
 
         Note that PyExifTool supports batch executions with many photos, but in
         my tests, that didn't really improve performance at all (and it has the
@@ -287,16 +256,19 @@ class ExifWorker(Thread):
         cost for each photo. It doesn't seem to get better by processing, say,
         50 photos in a batch instead of 1 at a time.
 
-        :param record: The photo to load.
+        :param file: The path to the photo file.
         :return: None
+        :raise ExifToolException: If there is an error from PyExifTool while
+         loading the EXIF data.
         """
 
-        try:
-            record.exif_raw = self.exif_raw.get_metadata(record.path)[0]
-            record.exif_fmt = self.exif_fmt.get_metadata(record.path)[0]
-        except ExifToolException as e:
-            record.exception = e
+        # If ExifTool is not yet open, then open a connection
+        if not self._is_open:
+            self.exif_raw.run()
+            self.exif_fmt.run()
+            self._is_open = True
 
-        # Set the event to notify the preprocessing worker that submitted this
-        # photo record
-        self.event_loop.call_soon_threadsafe(record.event.set)  # noqa
+        return ExifData(
+            exif_raw=self.exif_raw.get_metadata(str(file))[0],
+            exif_fmt=self.exif_fmt.get_metadata(str(file))[0]
+        )

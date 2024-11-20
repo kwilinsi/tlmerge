@@ -1,4 +1,3 @@
-import asyncio
 from argparse import Namespace
 import logging
 import sys
@@ -10,7 +9,7 @@ from .run import run
 _silent: bool = False
 
 
-async def main():
+def main():
     # Parse command line arguments
     args: Namespace = parse_cli()
 
@@ -33,7 +32,7 @@ async def main():
     log = logging.getLogger(__name__)
 
     # Load the sub-config files
-    n = await CONFIG.load_all_config_files(args.project, args)
+    n = CONFIG.load_all_config_files(args.project, args)
     if n + global_cfg == 0:
         log.info('No config files found')
     elif n == 0:
@@ -50,11 +49,11 @@ async def main():
         log.info(f'Saved default configuration to "{args.config}"')
 
     # Initialize the database
-    await DB.initialize(root_config.database)
+    DB.initialize(root_config.database)
 
     # Run the selected mode
     try:
-        await run(args.mode, args.project)
+        run(args.mode, args.project)
     except Exception as e:  # noqa
         log.critical(f"Fatal error while running '{args.mode}': {e}",
                      exc_info=True)
@@ -62,7 +61,7 @@ async def main():
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt as e:
         sys.exit(1 if _silent else 'Keyboard interrupt: terminating')
     except BaseException as e:

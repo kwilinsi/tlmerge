@@ -1,11 +1,9 @@
-import asyncio
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 import sys
 
 import coloredlogs
 import logging.handlers
-from logging import LogRecord
 
 
 def configure_log(file: Path | None,
@@ -45,8 +43,7 @@ def configure_log(file: Path | None,
         )
         file_handler.setFormatter(logging.Formatter(
             fmt='%(asctime)s.%(msecs)03d - '
-                '%(threadName)-12.12s %(task_name)-12.12s '
-                '%(name)-20.20s %(levelname)-8s '
+                '%(threadName)-15.15s %(name)-20.20s %(levelname)-8s '
                 '%(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         ))
@@ -60,12 +57,12 @@ def configure_log(file: Path | None,
             level=(logging.DEBUG if console == 'verbose'
                    else logging.WARN if console == 'quiet' else logging.INFO),
             logger=root,
-            fmt='%(asctime)s %(task_name)-8.8s '
+            fmt='%(asctime)s %(threadName)-10.10s '
                 '%(module)-8.8s %(levelname)-8s %(message)s',
             datefmt='%H:%M:%S',
             field_styles={
                 'asctime': {'color': 'green', 'bright': True},
-                'task_name': {'color': 'yellow'},
+                'threadName': {'color': 'yellow', 'bright': True},
                 'levelname': {'color': 'white', 'bright': True},
                 'module': {'color': 'cyan'},
             },
@@ -78,13 +75,6 @@ def configure_log(file: Path | None,
             },
         )
 
-    # Replace the record factory so that it adds the asyncio task name
-    logging.setLogRecordFactory(build_factory(logging.getLogRecordFactory()))
-
-    # Asyncio configurations
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    logging.captureWarnings(True)
-
     # Log a success message
     if to_file and to_console:
         msg = f'writing to console and log file: "{file}"'
@@ -96,25 +86,3 @@ def configure_log(file: Path | None,
         msg = 'both console and log file disabled'
 
     logging.getLogger(__name__).debug('Initialized logger: ' + msg)
-
-
-def build_factory(default_factory: Callable[[...], LogRecord]) -> \
-        Callable[[...], LogRecord]:
-    """
-    Create a new factor for log records that adds the current asyncio task name
-    to each record. That way it can be used in the handler format strings.
-
-    :param default_factory: The default logging factory.
-    :return: The new logging factory.
-    """
-
-    def new_factory(*args, **kwargs) -> LogRecord:
-        record = default_factory(*args, **kwargs)
-        try:
-            asyncio.get_running_loop()  # check if inside an event loop
-            record.task_name = asyncio.current_task().get_name()
-        except Exception:
-            record.task_name = 'synchronous'
-        return record
-
-    return new_factory

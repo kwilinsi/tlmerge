@@ -1,6 +1,5 @@
-import asyncio
 from collections.abc import Callable, Generator
-from datetime import date, datetime
+from datetime import datetime
 import logging
 from pathlib import Path
 from random import shuffle
@@ -11,11 +10,11 @@ from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
 _log = logging.getLogger(__name__)
 
 
-async def _iter(root: Path,
-                excluded: list[str],
-                max_length: int,
-                get_dirs: bool = True,
-                map_func: Callable[[str], any] | None = None) -> \
+def _iter(root: Path,
+          excluded: list[str],
+          max_length: int,
+          get_dirs: bool = True,
+          map_func: Callable[[str], any] | None = None) -> \
         Generator[tuple[Path, any], None, None]:
     """
     Iterate over all items in a given directory, yielding the files or
@@ -41,7 +40,7 @@ async def _iter(root: Path,
     f = None
 
     # Iterate over everything in the root directory
-    for path in await asyncio.to_thread(root.iterdir):
+    for path in root.iterdir():
         # Make sure it's a file/directory as required
         if get_dirs:
             if not path.is_dir():
@@ -94,7 +93,7 @@ class Scanner:
         self.scan_all = scan_all
         self.order = order
 
-    async def iter_dates(self) -> Generator[Path, None, None]:
+    def iter_dates(self) -> Generator[Path, None, None]:
         """
         Iterate over all the directories in the project root that match the date
         format. These are the date directories, which contain groups, which
@@ -126,29 +125,22 @@ class Scanner:
             map_func=lambda n: datetime.strptime(n, date_format)
         )
 
-        # If order doesn't matter, just yield directly from the generator
+        # If order doesn't matter, just yield directories from the generator
         if not sample and not self.order:
-            async for directory, _ in generator:
-                yield directory
+            yield from (d for d, _ in generator)
             return
-
-        # Otherwise, collect all directories in a list along with their parsed
-        # date value
-        directories: list[tuple[Path, date]] = []
-        async for directory, dt in generator:
-            directories.append((directory, dt))
 
         # Shuffle/sort based on sample mode and whether to order
         if s_random:
+            directories = [d for d, _ in generator]
             shuffle(directories)
-            for directory, _ in directories:
-                yield directory
+            yield from directories
         else:
             # Sort by the datetime to yield in chronological order
-            for directory, _ in sorted(directories, key=lambda entry: entry[1]):
-                yield directory
+            yield from (d for d, _ in
+                        sorted(list(generator), key=lambda e: e[1]))
 
-    async def iter_groups(self, date_dir: Path) -> Generator[Path, None, None]:
+    def iter_groups(self, date_dir: Path) -> Generator[Path, None, None]:
         """
         Iterate over all the directories in a particular date directory. These
         are the group directories, which contain photos.
@@ -190,18 +182,16 @@ class Scanner:
 
         ##################################################
 
-        # If order doesn't matter, just yield directly from the generator
+        # If order doesn't matter, just yield directories from the generator
         if not sample and not self.order:
-            async for directory, _ in generator:
-                yield directory
+            yield from (d for d, _ in generator)
             return
 
         # If it's a randomized sample, shuffle first, and then yield
         if s_random:
-            directories = [d async for d, _ in generator]
+            directories = [d for d, _ in generator]
             shuffle(directories)
-            for d in directories:
-                yield d
+            yield from directories
             return
 
         # Otherwise, get a sort key sort based on the group ordering policy.
@@ -214,10 +204,9 @@ class Scanner:
             sort_key = lambda e: e[0].name
 
         # Now sort and yield the directories
-        for d, _ in sorted([entry async for entry in generator], key=sort_key):
-            yield d
+        yield from (d for d, _ in sorted(list(generator), key=sort_key))
 
-    async def iter_photos(
+    def iter_photos(
             self,
             group_dir: Path,
             randomize: bool = False) -> Generator[Path, None, None]:
@@ -241,33 +230,27 @@ class Scanner:
 
         # Get a generator that retrieves all the photo files (making sure not
         # to include config files)
-        generator = _iter(
+        generator = (p for p, _ in _iter(
             group_dir,
             excluded_photos,
             MAX_PHOTO_NAME_LENGTH,
             get_dirs=False,
             map_func=lambda n: n != DEFAULT_CONFIG_FILE
-        )
+        ))
 
-        # If order doesn't matter, just yield directly from the generator
+        # If order doesn't matter, just yield photos from the generator
         if not randomize and not self.order:
-            async for directory, _ in generator:
-                yield directory
-            return
-
-        # Otherwise, transfer generator to a list
-        photos = [d async for d, _ in generator]
-
-        # If randomized, shuffle. Otherwise, sort
-        if randomize:
+            yield from generator
+        elif randomize:
+            # If randomized, shuffle
+            photos = list(generator)
             shuffle(photos)
-            for d in photos:
-                yield d
+            yield from photos
         else:
-            for d in sorted(photos):
-                yield d
+            # Otherwise sort
+            yield from sorted(list(generator))
 
-    async def iter_all_photos(
+    def iter_all_photos(
             self,
             log_summary: bool = True) -> Generator[Path, None, None]:
         """
@@ -287,7 +270,7 @@ class Scanner:
 
             # If randomly sampling, defer to the randomized iterator
             if s_random:
-                async for p in self.iter_all_photos_random(s_size, log_summary):
+                for p in self.iter_all_photos_random(s_size, log_summary):
                     yield p
                 return
 
@@ -297,15 +280,15 @@ class Scanner:
         ##################################################
 
         # Iterate over each date
-        async for date_dir in self.iter_dates():
+        for date_dir in self.iter_dates():
             date_photo_counter, dates = 0, dates + 1
 
             # Iterate over each group
-            async for group_dir in self.iter_groups(date_dir):
+            for group_dir in self.iter_groups(date_dir):
                 group_photo_counter, groups = 0, groups + 1
 
                 # Iterate over each photo
-                async for photo in self.iter_photos(group_dir):
+                for photo in self.iter_photos(group_dir):
                     yield photo
                     photos += 1
                     group_photo_counter += 1
@@ -348,7 +331,7 @@ class Scanner:
                 f"and {photos} photo{'' if photos == 1 else 's'}"
             )
 
-    async def iter_all_photos_random(
+    def iter_all_photos_random(
             self,
             sample_size: int | None,
             log_summary: bool = True) -> Generator[Path, None, None]:
@@ -378,7 +361,7 @@ class Scanner:
         counter = 0
 
         # Get all the date directories. Make sure there's at least one
-        date_dir_queue = [d async for d in self.iter_dates()]
+        date_dir_queue = list(self.iter_dates())
 
         # This list stores a tuple for each date directory. Each tuple contains
         # two elements:
@@ -404,7 +387,7 @@ class Scanner:
                      len(group_dirs) < sample_size - counter):
                 group_dirs.append((
                     [],
-                    [g async for g in self.iter_groups(date_dir_queue.pop())]
+                    list(self.iter_groups(date_dir_queue.pop()))
                 ))
 
             # If the group index reached the end of the list of groups, go back
@@ -449,8 +432,9 @@ class Scanner:
                     del group_dirs[g]
                 else:
                     # Load all the photos from the next group
-                    photos = [p async for p in
-                              self.iter_photos(groups.pop(), randomize=True)]
+                    photos = list(self.iter_photos(
+                        groups.pop(), randomize=True
+                    ))
                     group_dirs[g] = (photos, groups)
                 continue
 

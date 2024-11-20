@@ -1,3 +1,4 @@
+from collections import deque
 from pathlib import Path
 import logging
 
@@ -7,7 +8,7 @@ from .scanner import Scanner
 _log = logging.getLogger(__name__)
 
 
-async def scan(project: Path) -> None:
+def scan(project: Path) -> None:
     """
     Scan all the files in the timelapse directory to log summary statistics
     on the number of photos.
@@ -20,13 +21,17 @@ async def scan(project: Path) -> None:
               '(this may take some time)')
 
     # Iterator that traverses the photos. Ordered so log messages look better
-    iterator = Scanner(order=True).iter_all_photos()
+    generator = Scanner(order=True).iter_all_photos()
 
     # If sampling 50 or fewer photos, log each of them
-    sample, _, sample_size = CONFIG.root.sample_details()
-    if sample and sample_size <= 50:
-        async for photo in iterator:
-            _log.info(f'Found {photo}')
+    sample, s_random, s_size = CONFIG.root.sample_details()
+    if sample and s_size <= 50:
+        _log.info(f"Sampling {s_size}{' random' if s_random else ''} "
+                  f"photo{'' if s_size == 1 else 's'}…")
+        for photo in generator:
+            _log.info(f'Found photo {photo}')
     else:
-        async for _ in iterator:
-            pass
+        # Quickly exhaust the generator for its logging side effects and
+        # to make sure there aren't any scanning errors
+        # https://stackoverflow.com/a/50938015/10034073
+        deque(generator, maxlen=0)

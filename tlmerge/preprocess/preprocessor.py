@@ -1,62 +1,96 @@
-import asyncio
-from asyncio import Queue as AsyncQueue, Task
 import logging
 from pathlib import Path
-from queue import SimpleQueue
+from queue import Empty, Queue
+from threading import Event, local, Thread
 
 import imageio.v3 as iio
 import numpy as np
 import rawpy
+# noinspection PyUnresolvedReferences
 from rawpy import LibRawError, RawPy, ThumbFormat
 from PIL import Image
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import DB, Camera, Lens, Photo
 from tlmerge.scan import Scanner
-from .async_worker_pool import AsyncWorkerPool, AsyncPoolExceptionGroup
-from .exif import ExifWorker, PhotoExifRecord
+from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
+from .exif import ExifWorker
 
 _log = logging.getLogger(__name__)
 
 
 class Preprocessor:
     def __init__(self):
-        # Determine the number of workers to use. If the number of workers is
-        # greater than the number of photos we're loading (due to a sample),
-        # then reduce the worker count to avoid unused workers
+        # Determine the number of workers to use
         self.cfg = CONFIG.root
-        workers = self.cfg.workers
         sample, s_random, s_size = self.cfg.sample_details()
-        if 0 <= s_size < workers:
+        workers = self.cfg.workers - 1
+
+        if workers < 1:
+            # Need at least 2 workers to account for the db writer
+            _log.debug('Using minimum 2 workers in preprocessor '
+                       '(one for database)')
+            workers = 1
+        elif 1 <= s_size < workers:
+            # If the number of workers is greater than the number of photos
+            # we're loading (due to a sample), then reduce the worker count
+            # to avoid unused workers
             workers = s_size
 
+        # Local storage for each worker thread; used to access the exif worker
+        self._thread_data = local()
+
         # Log info
-        msg = f'Running preprocessor with {workers} workers'
+        msg = f'Running preprocessor with {workers + 1} workers (1 for db)'
         if sample:
             msg += (f": {'randomly ' if s_random else ''} sampling "
                     f"{s_size} photo{'' if s_size else 's'}")
         _log.info(msg)
 
-        # Database queue and worker that processes it
-        self.database_queue: AsyncQueue[Photo | None] = AsyncQueue()
-        self.db_worker: Task | None = None
+        # Database queue, a worker that processes it, and an event to signal
+        # that worker to stop
+        self.database_queue: Queue[Photo] = Queue()
+        self.db_worker: Thread = Thread(
+            target=self._run_db_worker,
+            name='prp-db-wkr',
+            daemon=True
+        )
+        self.db_end_event: Event = Event()
 
-        # EXIF queue and threaded workers that process it
-        self.exif_queue: SimpleQueue[PhotoExifRecord | None] = SimpleQueue()
-        loop = asyncio.get_running_loop()
-        self.exif_workers: list[ExifWorker] = [
-            ExifWorker(self.exif_queue, loop, i)
-            for i in range(1, workers + 1)
-        ]
-
-        # The primary async worker pool that processes each photo
-        self.photo_worker_pool = AsyncWorkerPool(
-            workers=workers,
-            max_errors=self.cfg.max_processing_errors,
-            results=self.database_queue
+        # The primary worker pool that processes each photo
+        self.photo_worker_pool = WorkerPool(
+            max_workers=workers,
+            name_prefix='prp-wkr-',
+            results=self.database_queue,
+            on_close_hook=self._close_exif_worker
         )
 
-    async def run(self) -> None:
+    @property
+    def _exif_worker(self) -> ExifWorker:
+        """
+        Get the ExifWorker for the calling thread. If there is no such worker,
+        create one first.
+
+        :return: The ExifWorker for this thread.
+        """
+
+        if not hasattr(self._thread_data, 'exif'):
+            self._thread_data.exif = ExifWorker()
+        return self._thread_data.exif
+
+    def _close_exif_worker(self) -> None:
+        """
+        Close the ExifWorker associated with the calling thread (if one exists),
+        and remove it from the thread data storage.
+
+        :return: None
+        """
+
+        if hasattr(self._thread_data, 'exif'):
+            self._thread_data.exif.close()
+            del self._thread_data.exif
+
+    def run(self) -> None:
         """
         Run the preprocessing step. This loads all the photos based on the
         program configuration, scans their metadata (and some other info about
@@ -65,109 +99,68 @@ class Preprocessor:
         :return: None
         """
 
-        cfg = CONFIG.root
-        project = cfg.project
-        _log.info(f'Preprocessing photos in "{project}" '
+        _log.info(f'Preprocessing photos in "{self.cfg.project}" '
                   '(this may take some time)')
 
         # Start the database worker
-        self.db_worker = asyncio.create_task(
-            self._run_db_worker(), name='db_worker'
-        )
+        self.db_worker.start()
 
-        # Start the exif workers
-        for worker in self.exif_workers:
-            worker.start()
-
-        # Run the async worker pool that processes all the photos. If it fails,
-        # exit here
-        if not await self._load_photos():
-            return
-
-        # Signal the database and EXIF workers to close
-        await self.database_queue.put(None)
-        for _ in range(len(self.exif_workers)):
-            self.exif_queue.put(None)
-
-        # Wait for DB worker to finish
-        await self.db_worker
-
-        # Wait for EXIF workers to close, ironically by spawning another thread
-        # that joins with the worker threads to wait on them
-        def wait_for_exif_workers():
-            for w in self.exif_workers:
-                w.join()
-
-        await asyncio.to_thread(wait_for_exif_workers)
-
-    async def _load_photos(self) -> bool:
+        # Assign photos to a worker pool, and wait for them to finish processing
         try:
-            # Assign photos to a worker pool
-            async with self.photo_worker_pool as pool:
-                async for p in Scanner().iter_all_photos():
-                    pool.add(self.preprocess_photo(p))
-
-            # Success
-            return True
-        except AsyncPoolExceptionGroup as exc_pool:
+            with self.photo_worker_pool as pool:
+                for photo in Scanner().iter_all_photos():
+                    pool.add(
+                        self.preprocess_photo,
+                        str(self.cfg.rel_path(photo)),
+                        photo
+                    )
+        except WorkerPoolExceptionGroup as exc_pool:
             # Log the error(s)
-            n = len(exc_pool.exceptions)
-            if n == 1:
-                err = exc_pool.exceptions[0].__class__.__name__
-            else:
-                err = f"{n} error{'s' if n > 1 else ''}"
-
             _log.critical(
                 f"Failed to preprocess photos in {self.cfg.project}: "
-                f"got {err}",
+                f"got {exc_pool.summary()}",
                 exc_info=True
             )
-            self._cancelled()
-            return False
-        except Exception as e:
+        except BaseException as e:
+            # Re-raise a fatal error (MemoryError or strictly BaseException)
+            if isinstance(e, MemoryError) or not isinstance(e, Exception):
+                self.db_end_event.set()
+                raise
+
             # Unexpected other exception
             _log.critical(
                 f'Failed to preprocess photos in {self.cfg.project}: '
                 f'got unexpected {e.__class__.__name__}',
                 exc_info=True
             )
-            self._cancelled()
-            return False
-        except BaseException:
-            self._cancelled()
-            # Re-raise a fatal error (like KeyboardInterrupt or SystemExit)
-            raise
+        finally:
+            # Signal database thread to stop
+            self.db_end_event.set()
 
-    async def _run_db_worker(self) -> None:
-        while True:
-            photo = await self.database_queue.get()
-            if photo is None:
-                return
+        # Wait for DB worker to finish
+        self.db_worker.join()
 
-            # Save to database
-            _log.info(f'Saving photo to database: '
-                      f'\nPhoto: {photo.__dict__}'
-                      f'\nCamera: {photo.camera.__dict__}'
-                      f'\nLens: {photo.lens.__dict__}')
-
-    def _cancelled(self) -> None:
+    def _run_db_worker(self) -> None:
         """
-        Something went wrong, and we need to cancel. Perform some cleanup by
-        cancelling worker tasks and threads spawned by this Preprocessor.
+        Run this in its on thread as the database worker. It continuously
+        queries the database queue until it gets None, at which point it exits.
 
         :return: None
         """
 
-        # Cancel the database worker
-        self.db_worker.cancel()
+        while not self.db_end_event.is_set():
+            try:
+                photo = self.database_queue.get(timeout=0.25)
 
-        # Signal EXIF workers to stop
-        while not self.exif_queue.empty():
-            self.exif_queue.get_nowait()
-        for _ in range(len(self.exif_workers)):
-            self.exif_queue.put(None)
+                # Save to database
+                _log.info(f'Saving photo to database: '
+                          f'\nPhoto: {photo.__dict__}'
+                          f'\nCamera: {photo.camera.__dict__}'
+                          f'\nLens: {photo.lens.__dict__}')
+            except Empty:
+                pass
 
-    async def preprocess_photo(self, file: Path) -> Photo:
+    def preprocess_photo(self, file: Path) -> Photo:
         """
         Preprocess a single photo.
 
@@ -175,43 +168,24 @@ class Preprocessor:
         :return: A new database Photo record.
         """
 
-        _log.info(f'Preprocessing {CONFIG.root.rel_path(file)}')
-
-        # Set the task name to the file name. Useful for logging. The structure
-        # (photo/group/date) is reversed since the file name is more important than
-        # the group and date
-        asyncio.current_task().set_name(
-            Path(file.stem) / file.parent.name / file.parent.parent.name
-        )
-
-        # Send the photo to the exif processor
-        exif_record = PhotoExifRecord(file)
-        self.exif_queue.put_nowait(exif_record)
+        _log.info(f'Preprocessing {self.cfg.rel_path(file)}')
 
         # Create the database record
         photo = Photo()
         photo.camera = Camera()
         photo.lens = Lens()
 
-        # Open the photo in rawpy (i.e. libraw) to get some info
-        def run_rawpy():
-            with rawpy.imread(str(file)) as rpy_photo:
-                _apply_libraw_metadata(rpy_photo, photo)
+        # Extract and apply the EXIF data
+        self._exif_worker.extract(file).apply_metadata(photo)
 
-        await asyncio.to_thread(run_rawpy)
-
-        # do stuff
-        ...
-
-        # Wait for the metadata from the EXIF worker, and then add it
-        await exif_record.event.wait()
-        exif_record.apply_metadata(photo)
+        # Open the photo in RawPy (i.e. LibRaw) to get more info
+        with rawpy.imread(str(file)) as rpy_photo:
+            _apply_libraw_metadata(rpy_photo, photo)
 
         # Return the finished db Photo record
         return photo
 
 
-# noinspection DuplicatedCode
 def _apply_libraw_metadata(rpy_photo: RawPy, db_photo: Photo) -> None:
     """
     Given a photo opened by rawpy (i.e. libraw), apply information from it to

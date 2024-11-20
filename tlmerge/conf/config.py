@@ -540,8 +540,8 @@ class GlobalConfig(Config):
 
         :param path: The path to apply relative to the project directory.
         :return: The relative path.
-        :raises RuntimeError: If the project directory path was never set.
-        :raises ValueError: If the given path is not relative to the project
+        :raise RuntimeError: If the project directory path was never set.
+        :raise ValueError: If the given path is not relative to the project
          directory.
         """
 

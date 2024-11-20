@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from pathlib import Path
 from typing import Literal
@@ -9,15 +8,12 @@ from .preprocess import Preprocessor
 _log = logging.getLogger(__name__)
 
 
-async def run(mode: Literal['scan', 'preprocess'],
-              project: Path) -> None:
-    # Set the asyncio task name to the mode; useful for logging
-    asyncio.current_task().set_name(mode.capitalize())
-
+def run(mode: Literal['scan', 'preprocess'],
+        project: Path) -> None:
     # Run the appropriate function based on the mode
     if mode == 'scan':
-        await scan(project)
+        scan(project)
     elif mode == 'preprocess':
-        await Preprocessor().run()
+        Preprocessor().run()
     else:
         raise ValueError(f"Invalid execution mode '{mode}'")

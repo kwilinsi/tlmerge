@@ -70,9 +70,10 @@ def _build_parser() -> ArgumentParser:
         metavar='NUM',
         type=int,
         default=SUPPRESS,
-        help="The number of concurrent asyncio workers to use when running "
-             "many processes (e.g. processing or preprocessing individual "
-             "photos). Must be at least 1. Defaults to 20."
+        help="The number of worker threads to use when running many processes "
+             "(e.g. processing or preprocessing individual photos). This must "
+             "be at least 1, although some tasks have a higher minimum and "
+             "will ignore this value if it's too low. Defaults to 20."
     )
 
     parser.add_argument(

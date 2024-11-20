@@ -18,7 +18,7 @@ def validate_log_level(verbose: bool | None,
     :param quiet: The quiet flag.
     :param silent: The silent flag.
     :return: None
-    :raises ValueError: If more than one flag is True.
+    :raise ValueError: If more than one flag is True.
     """
 
     if (verbose is True) + (quiet is True) + (silent is True) > 1:
@@ -66,7 +66,7 @@ def validate_group(group: str, date_context: Path | None = None) -> Path:
     :param date_context: The date containing this group, or None if the group
     includes a reference to a date.
     :return: The fully qualified and validated group Path with the date.
-    :raises ValueError: If the group is invalid.
+    :raise ValueError: If the group is invalid.
     """
 
     if not group or not group.strip():
