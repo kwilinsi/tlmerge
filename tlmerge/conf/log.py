@@ -75,6 +75,9 @@ def configure_log(file: Path | None,
             },
         )
 
+    # Suppress debug messages from PIL that spam the logs with EXIF data
+    logging.getLogger('PIL').setLevel(logging.INFO)
+
     # Log a success message
     if to_file and to_console:
         msg = f'writing to console and log file: "{file}"'
