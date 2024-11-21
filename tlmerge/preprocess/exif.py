@@ -6,6 +6,7 @@ from exiftool import ExifToolHelper
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import Camera, Lens, Photo
+from .metadata import PhotoMetadata
 
 
 def parse_date_time(dt_string: str,
@@ -112,10 +113,16 @@ class ExifData:
                 return cast(val)
             except Exception:
                 if error is None:
+                    # Try to get the file path/name to make the error message
+                    # more helpful
+                    try:
+                        name = CONFIG.root.rel_path(exif['SourceFile'])
+                    except Exception:
+                        name = exif.get('File:FileName', '[Unknown Photo]')
+
                     error = ValueError(
                         f"Tag {tag} had unexpected value \"{val}\" "
-                        f"for {CONFIG.root.rel_path(self.path)}; "
-                        f"couldn't cast to {cast}"
+                        f"for {name}; couldn't cast to {cast}"
                     )
 
         # No matching tags
@@ -123,11 +130,12 @@ class ExifData:
             raise error
         return None
 
-    def apply_metadata(self, photo: Photo) -> None:
+    def record_metadata(self, photo: PhotoMetadata) -> None:
         """
-        Apply this EXIF data to the given database Photo record.
+        Record the relevant extracted EXIF data in the given PhotoMetadata
+        object.
 
-        :param photo: The database Photo record.
+        :param photo: The photo metadata object.
         :return: None
         :raise KeyError: If the EXIF data for a mandatory (non-null) column in
          the database is missing.
@@ -170,31 +178,31 @@ class ExifData:
                                     opt=False, cast=int)
 
         # Camera info
-        camera: Camera = photo.camera
-        camera.make = self.get('EXIF:Make')
-        camera.model = self.get('EXIF:Model')
+        photo.camera_make = self.get('EXIF:Make', opt=False)
+        photo.camera_model = self.get('EXIF:Model', opt=False)
 
         # Lens info
-        lens: Lens = photo.lens
-        lens.make = self.get('EXIF:LensMake')
-        lens.model = self.get('EXIF:LensModel', 'Composite:LensID')
-        lens.spec = self.get('Composite:LensSpec')
+        photo.lens_make = self.get('EXIF:LensMake')
+        photo.lens_model = self.get('EXIF:LensModel', 'Composite:LensID')
+        photo.lens_spec = self.get('Composite:LensSpec')
 
         # Lens focal length range
-        lens.min_focal_length = self.get('MakerNotes:MinFocalLength',
-                                         fmt=False, cast=float)
-        lens.max_focal_length = self.get('MakerNotes:MaxFocalLength',
-                                         fmt=False, cast=float)
+        photo.lens_min_focal_length = self.get('MakerNotes:MinFocalLength',
+                                               fmt=False, cast=float)
+        photo.lens_max_focal_length = self.get('MakerNotes:MaxFocalLength',
+                                               fmt=False, cast=float)
 
         # Lens aperture range
-        lens.lens_f_stops = self.get('MakerNotes:LensFStops', cast=float)
-        lens.max_aperture_min_focal = self.get(
+        photo.lens_lens_f_stops = self.get(
+            'MakerNotes:LensFStops', cast=float
+        )
+        photo.lens_max_aperture_min_focal = self.get(
             'MakerNotes:MaxApertureAtMinFocal', cast=float
         )
-        lens.max_aperture_max_focal = self.get(
+        photo.lens_max_aperture_max_focal = self.get(
             'MakerNotes:MaxApertureAtMaxFocal', cast=float
         )
-        lens.effective_max_aperture = self.get(
+        photo.lens_effective_max_aperture = self.get(
             'MakerNotes:EffectiveMaxAperture', cast=float
         )
 

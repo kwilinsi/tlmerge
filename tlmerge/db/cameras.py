@@ -16,7 +16,7 @@ class Camera(Base):
     # Primary key
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # Location
+    # Name
     make: Mapped[str] = mapped_column(String(MAX_CAMERA_MAKE_LENGTH))
     model: Mapped[str] = mapped_column(String(MAX_CAMERA_MODEL_LENGTH))
 

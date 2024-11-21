@@ -156,6 +156,16 @@ class WorkerPool:
          task in error messages if it fails.
         :param args: Arguments to pass to the task function.
         :return: None
+        :raises ValueError: If the given task is None.
+        :raises RuntimeError: If the pool state is NOT_STARTED or CLOSED, or if
+         it's FINISHED but was not cancelled due to one or more exceptions.
+        :raises WorkerPoolExceptionGroup: If the pool was cancelled due to one
+         or more tasks failing and exceeding the error threshold.
+        :raises MemoryError: If the pool was cancelled due to any worker
+         encountering a memory error.
+        :raises BaseException: If the pool was cancelled due to a fatal
+         BaseException. (Note: this is strictly an exception inheriting from
+         BaseException but not Exception).
         """
 
         if task is None:
@@ -199,7 +209,7 @@ class WorkerPool:
 
     def _worker_loop(self):
         """
-        This function is run in each worker thread. It continously gets and
+        This function is run in each worker thread. It continuously gets and
         runs the next task, until (a) there aren't any more tasks to run, or
         (b) this pool is no longer RUNNING.
 
@@ -208,9 +218,9 @@ class WorkerPool:
 
         try:
             while True:
-                # If the pool is closed or cancelling, stop this worker
+                # If the pool is cancelling, stop this worker
                 with self._lock:
-                    if self._state != WorkerPoolState.RUNNING:
+                    if self._state == WorkerPoolState.CANCELLING:
                         return
 
                 # Get the next task to run
@@ -223,9 +233,22 @@ class WorkerPool:
                 # Run it
                 self._run_task(task, identifier, args)
         finally:
-            # Run the close hook, if given
-            if self.on_close_hook is not None:
-                self.on_close_hook()
+            try:
+                # Remove this worker thread from the list of workers
+                with self._lock:
+                    self._workers.remove(current_thread())
+
+                # Run the close hook, if given
+                if self.on_close_hook is not None:
+                    self.on_close_hook()
+            finally:
+                # If this is the last worker to end, switch state to FINISHED.
+                # (Note: length of tasks queue isn't checked, as when cancelled
+                # there may be unfinished tasks left over)
+                with self._lock:
+                    if self._state == WorkerPoolState.CLOSED and \
+                            len(self._workers) == 0:
+                        self._state = WorkerPoolState.FINISHED
 
     def _run_task(self,
                   task: Callable[[...], any],
@@ -308,7 +331,14 @@ class WorkerPool:
                 _log.warning(f"{t} task{'' if t == 1 else 's'} "
                              "in worker pool not finished")
 
-    def __enter__(self) -> Self:
+    def start(self) -> None:
+        """
+        Start this pool. It will now accept tasks via add().
+
+        :return: None
+        :raises RuntimeError: If the pool was already started.
+        """
+
         with self._lock:
             if self._state != WorkerPoolState.NOT_STARTED:
                 raise RuntimeError(
@@ -318,36 +348,94 @@ class WorkerPool:
 
             # Set the state to running; it now accepts tasks
             self._state = WorkerPoolState.RUNNING
-            return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Cannot exit before it starts
+    def close(self) -> None:
+        """
+        Close this pool. It will no longer accept new tasks, but it will
+        continue running until all existing tasks are finished.
+
+        If the pool is already closed, finished, or cancelling, this has no
+        effect. However, if it cancelled due to one or more exceptions, that
+        exception (or exception group) is raised here.
+
+        :return: None
+        :raises RuntimeError: If the pool state is NOT_STARTED.
+        :raises WorkerPoolExceptionGroup: If the pool was cancelled due to one
+         or more tasks failing and exceeding the error threshold.
+        :raises MemoryError: If the pool was cancelled due to any worker
+         encountering a memory error.
+        :raises BaseException: If the pool was cancelled due to a fatal
+         BaseException. (Note: this is strictly an exception inheriting from
+         BaseException but not Exception).
+        """
+
         with self._lock:
             if self._state == WorkerPoolState.NOT_STARTED:
-                raise RuntimeError("Can't stop worker pool before starting it")
-
-            # If RUNNING, Mark CLOSED so new tasks aren't added
-            if self._state == WorkerPoolState.RUNNING:
+                # Can't close until started
+                raise RuntimeError("Can't close worker pool before starting it")
+            elif self._state == WorkerPoolState.RUNNING:
+                # Only switch to CLOSED if currently RUNNING
                 self._state = WorkerPoolState.CLOSED
 
-        # Wait for all workers to finish. No need to get the lock, as
-        # self._workers isn't modified when not RUNNING
-        for worker in self._workers:
-            worker.join()
+            # If cancelled with an exception, raise the exception
+            if self._exception is not None:
+                raise self._exception
 
-        try:
-            # If there was already an exception while this context manager was
-            # active, let it raise normally. (Returning true would suppress it)
-            # https://docs.python.org/3.13/reference/datamodel.html#object.__exit__
-            # This accounts for exceptions raised by calling add()
-            if exc_val is not None:
-                return
+    def join(self) -> None:
+        """
+        Block the calling thread until all the workers finish. If they finish
+        due to one or more exceptions, they are raised.
 
-            # If there's an exception caused by enough workers failing (or just
-            # one worker encountering a fatal error), raise it
-            with self._lock:
+        You cannot join the pool until after closing it to reject new tasks.
+
+        :return: None
+        """
+
+        with self._lock:
+            if self._state in (WorkerPoolState.NOT_STARTED,
+                               WorkerPoolState.RUNNING):
+                raise RuntimeError("Can't join worker pool while in "
+                                   f"{self._state.name} state")
+            elif self._state == WorkerPoolState.FINISHED:
+                # Raise exception if there is one; otherwise exit
                 if self._exception is not None:
                     raise self._exception
-        finally:
-            # All workers finished
-            self._state = WorkerPoolState.FINISHED
+                return
+
+        # Block while waiting for all workers to finish
+        while True:
+            with self._lock:
+                if len(self._workers) == 0:
+                    break
+                worker = self._workers[0]
+            worker.join()
+
+        # If cancelled, raise the exception(s)
+        if self._exception is not None:
+            raise self._exception
+
+    def is_finished(self) -> bool:
+        """
+        Check whether this pool is finished.
+
+        :return: True if and only if it has completely finished.
+        """
+
+        with self._lock:
+            return self._state == WorkerPoolState.FINISHED
+
+    def __enter__(self) -> Self:
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+        try:
+            self.join()
+        except BaseException as e:
+            # If there was already an exception while this context manager was
+            # active, add it to this one
+            if exc_val is not None:
+                raise e from exc_val
+            raise e

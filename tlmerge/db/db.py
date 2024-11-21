@@ -27,6 +27,7 @@ class DBManager:
         :param path: Path to the database file.
         :return: None
         """
+
         _log.debug('Initializing database engine...')
         self._engine = create_engine(f'sqlite:///{path}')
         self._session_maker = sessionmaker(bind=self._engine)
@@ -37,6 +38,12 @@ class DBManager:
         _log.debug(f'Initialized db: "{path}"')
 
     def session(self) -> Session:
+        """
+        Get a new database session. Note that the session is not thread-safe.
+
+        :return: A new session.
+        """
+
         if self._session_maker is None:
             raise ValueError('DB not yet initialized')
         return self._session_maker()

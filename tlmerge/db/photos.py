@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (Boolean, DateTime, Float, ForeignKey,
+                        Integer, String, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -18,13 +19,16 @@ MAX_PHOTO_NAME_LENGTH = 25
 class Photo(Base):
     __tablename__ = 'Photos'
 
-    # Primary key
-    id: Mapped[int] = mapped_column(primary_key=True)
-
     # Location
-    date: Mapped[str] = mapped_column(String(MAX_DATE_LENGTH))
-    group: Mapped[str] = mapped_column(String(MAX_GROUP_LENGTH))
-    file_name: Mapped[str] = mapped_column(String(MAX_PHOTO_NAME_LENGTH))
+    date: Mapped[str] = mapped_column(
+        String(MAX_DATE_LENGTH), primary_key=True
+    )
+    group: Mapped[str] = mapped_column(
+        String(MAX_GROUP_LENGTH), primary_key=True
+    )
+    file_name: Mapped[str] = mapped_column(
+        String(MAX_PHOTO_NAME_LENGTH), primary_key=True
+    )
 
     # Camera and lens
     camera_id: Mapped[int] = mapped_column(ForeignKey("Cameras.id"))
@@ -42,12 +46,12 @@ class Photo(Base):
     time_taken: Mapped[datetime] = mapped_column(DateTime())
     file_size: Mapped[int] = mapped_column(Integer())  # in kilobytes
     iso: Mapped[int | None] = mapped_column(Integer())
-    shutter_speed: Mapped[str | None] = mapped_column(Float())  # a/b
+    shutter_speed: Mapped[str | None] = mapped_column(String())  # a/b
     aperture: Mapped[float | None] = mapped_column(Float())  # f/[#]
     focal_length: Mapped[float | None] = mapped_column(Float())  # mm
     auto_focus: Mapped[bool | None] = mapped_column(Boolean())
-    focus_distance: Mapped[float] = mapped_column(Float)  # in meters
-    field_of_view: Mapped[float] = mapped_column(Float)  # in degrees
+    focus_distance: Mapped[float | None] = mapped_column(Float())  # in meters
+    field_of_view: Mapped[float | None] = mapped_column(Float())  # in degrees
 
     # Photo size
     raw_width: Mapped[int] = mapped_column(Integer())

@@ -2,7 +2,9 @@ from collections.abc import Callable, Generator
 from datetime import datetime
 import logging
 from pathlib import Path
+from queue import Queue
 from random import shuffle
+from threading import Event, Thread
 
 from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
 from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
@@ -450,3 +452,50 @@ class Scanner:
                       f"photo{'' if sample_size == 1 else 's'}")
 
         del group_dirs
+
+    def enqueue_thread(self,
+                       output: Queue[Path | None] | Queue[Path],
+                       name: str = 'scanner',
+                       daemon: bool = True,
+                       start: bool = True,
+                       cancel_event: Event | None = None,
+                       none_terminated: bool = True,
+                       log_summary: bool = True) -> Thread:
+        """
+        Scan for all photos on a separate thread, adding them to the given
+        queue.
+
+        :param output: The queue in which to put the photo paths.
+        :param name: The thread name. Defaults to 'scanner'.
+        :param daemon: Whether to make the thread a daemon. Defaults to True.
+        :param start: Whether to start the thread immediately. Defaults to True.
+        :param cancel_event: This event is checked every time a new photo is
+         added to the queue. If it's set, the thread exits. If no event is
+         given, the thread cannot be cancelled gracefully. Defaults to None.
+        :param none_terminated: Whether to add None to the queue at the end to
+         signal that the scanner is done. Defaults to True.
+        :param log_summary: Whether to log summary statistics. Defaults to True.
+        :return: The Thread doing the scanning. Join it to wait for the
+         scan operating to finish.
+        """
+
+        def scan():
+            for photo in self.iter_all_photos(log_summary=log_summary):
+                # If cancel signal sent, exit this thread
+                if cancel_event is not None and cancel_event.is_set():
+                    return
+
+                # Add this photo the queue
+                output.put(photo)
+
+            # Signal done by adding None if enabled
+            if none_terminated:
+                output.put(None)
+
+        # Create the scanner thread
+        thread = Thread(target=scan, name=name, daemon=daemon)
+
+        if start:
+            thread.start()
+
+        return thread

@@ -25,14 +25,14 @@ class Lens(Base):
     spec: Mapped[str | None] = mapped_column(String(MAX_LENS_SPEC_LENGTH))
 
     # Focal length range
-    min_focal_length: Mapped[float] = mapped_column(Float)  # mm
-    max_focal_length: Mapped[float] = mapped_column(Float)  # mm
+    min_focal_length: Mapped[float | None] = mapped_column(Float())  # mm
+    max_focal_length: Mapped[float | None] = mapped_column(Float())  # mm
 
     # Aperture range
-    lens_f_stops: Mapped[float] = mapped_column(Float)
-    max_aperture_min_focal: Mapped[float] = mapped_column(Float)
-    max_aperture_max_focal: Mapped[float] = mapped_column(Float)
-    effective_max_aperture: Mapped[float] = mapped_column(Float)
+    lens_f_stops: Mapped[float | None] = mapped_column(Float())
+    max_aperture_min_focal: Mapped[float | None] = mapped_column(Float())
+    max_aperture_max_focal: Mapped[float | None] = mapped_column(Float())
+    effective_max_aperture: Mapped[float | None] = mapped_column(Float())
 
     # Photo relationship: one-to-many
     photos: Mapped[list["Photo"]] = relationship(  # noqa
