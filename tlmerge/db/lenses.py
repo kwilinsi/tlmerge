@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Float, String
+from sqlalchemy import CheckConstraint, Float, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -42,5 +42,11 @@ class Lens(Base):
     __table_args__ = (
         CheckConstraint(
             'make IS NOT NULL OR model IS NOT NULL OR spec IS NOT NULL'
+        ),
+        UniqueConstraint(
+            make, model, spec, min_focal_length, max_focal_length,
+            lens_f_stops, max_aperture_min_focal, max_aperture_max_focal,
+            effective_max_aperture,
+            name='all_unique'
         ),
     )

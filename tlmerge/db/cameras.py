@@ -1,4 +1,4 @@
-from sqlalchemy import Float, String
+from sqlalchemy import Float, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -29,4 +29,11 @@ class Camera(Base):
     # Photo relationship: one-to-many
     photos: Mapped[list["Photo"]] = relationship(  # noqa
         back_populates='camera'
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            make, model, wb_red, wb_green1, wb_blue, wb_green2,
+            name='all_unique'
+        ),
     )

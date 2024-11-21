@@ -1,5 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from tlmerge.db import Camera, Lens, Photo
 
@@ -168,9 +172,21 @@ class PhotoMetadata:
     lens_max_aperture_max_focal: float
     lens_effective_max_aperture: float
 
-    def apply_to_db_photo(self, photo: Photo) -> None:
+    def path_str(self) -> str:
         """
-        Apply this metadata to the given database Photo record.
+        Combine the `date`, `group`, and `file_name` into a path, and then
+        return it as a string. This is useful for identifying the file in
+        one string.
+
+        :return: The relative path to the file within the project as a string.
+        """
+
+        return str(Path(self.date, self.group, self.file_name))
+
+    def apply_photo_metadata(self, photo: Photo) -> None:
+        """
+        Apply this metadata to the given database Photo record. This does NOT
+        apply metadata for the camera or lens.
 
         :param photo: The photo record to modify.
         :return: None
@@ -180,12 +196,102 @@ class PhotoMetadata:
         for attr in _PHOTO_ATTRIBUTES:
             setattr(photo, attr, getattr(self, attr))
 
-        # Set camera attributes
-        camera: Camera = photo.camera
-        for attr in _CAMERA_ATTRIBUTES:
-            setattr(camera, attr, getattr(self, 'camera_' + attr))
+    def matches_camera(self, camera: Camera) -> bool:
+        """
+        Check whether this metadata matches the given database Camera record.
 
-        # Set the lens attributes
-        lens: Lens = photo.lens
+        :param camera: The camera to compare to this metadata.
+        :return: True if and only if all the attributes match.
+        """
+
+        for attr in _CAMERA_ATTRIBUTES:
+            if getattr(camera, attr) != getattr(self, 'camera_' + attr):
+                return False
+        return True
+
+    def matches_lens(self, lens: Lens) -> bool:
+        """
+        Check whether this metadata matches the given database Lens record.
+
+        :param lens: The lens to compare to this metadata.
+        :return: True if and only if all the attributes match.
+        """
+
         for attr in _LENS_ATTRIBUTES:
-            setattr(lens, attr, getattr(self, 'lens_' + attr))
+            if getattr(lens, attr) != getattr(self, 'lens_' + attr):
+                return False
+        return True
+
+    def get_camera(self, session: Session) -> Camera | None:
+        """
+        Get the Camera record in the database matching this metadata. If there
+        is no such match, return None.
+
+        :param session: A session connected to the database.
+        :return: The Camera record matching this metadata, or None.
+        """
+
+        return session.scalar(select(Camera).where(
+            Camera.make == self.camera_make,
+            Camera.model == self.camera_model,
+            Camera.wb_red == self.camera_wb_red,
+            Camera.wb_green1 == self.camera_wb_green1,
+            Camera.wb_blue == self.camera_wb_blue,
+            Camera.wb_green2 == self.camera_wb_green2
+        ))
+
+    def get_lens(self, session: Session) -> Lens | None:
+        """
+        Get the Lens record in the database matching this metadata. If there
+        is no such match, return None.
+
+        :param session: A session connected to the database.
+        :return: The Lens record matching this metadata, or None.
+        """
+
+        return session.scalar(select(Lens).where(
+            Lens.make == self.lens_make,
+            Lens.model == self.lens_model,
+            Lens.spec == self.lens_spec,
+            Lens.min_focal_length == self.lens_min_focal_length,
+            Lens.max_focal_length == self.lens_max_focal_length,
+            Lens.lens_f_stops == self.lens_lens_f_stops,
+            Lens.max_aperture_min_focal == self.lens_max_aperture_min_focal,
+            Lens.max_aperture_max_focal == self.lens_max_aperture_max_focal,
+            Lens.effective_max_aperture == self.lens_effective_max_aperture
+        ))
+
+    def create_camera(self) -> Camera:
+        """
+        Create a new database Camera record based on this metadata.
+
+        :return: A new Camera record.
+        """
+
+        return Camera(
+            make=self.camera_make,
+            model=self.camera_model,
+            wb_red=self.camera_wb_red,
+            wb_green1=self.camera_wb_green1,
+            wb_blue=self.camera_wb_blue,
+            wb_green2=self.camera_wb_green2
+        )
+
+    def create_lens(self) -> Lens:
+        """
+        Create a new database Lens record based on this metadata.
+
+        :return: A new Lens record.
+        """
+
+        return Lens(
+            make=self.lens_make,
+            model=self.lens_model,
+            spec=self.lens_spec,
+            min_focal_length=self.lens_min_focal_length,
+            max_focal_length=self.lens_max_focal_length,
+            lens_f_stops=self.lens_lens_f_stops,
+            max_aperture_min_focal=self.lens_max_aperture_min_focal,
+            max_aperture_max_focal=self.lens_max_aperture_max_focal,
+            effective_max_aperture=self.lens_effective_max_aperture,
+        )

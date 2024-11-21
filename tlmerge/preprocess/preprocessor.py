@@ -5,6 +5,7 @@ from threading import Event, local
 
 import imageio.v3 as iio
 import numpy as np
+from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 import rawpy
@@ -12,7 +13,7 @@ import rawpy
 from rawpy import LibRawError, RawPy, ThumbFormat
 
 from tlmerge.conf import CONFIG
-from tlmerge.db import Camera, DB, Lens, Photo
+from tlmerge.db import DB, Photo
 from tlmerge.scan import Scanner
 from .exif import ExifWorker
 from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
@@ -209,8 +210,9 @@ class Preprocessor:
         """
 
         # This dict stores database photo records from recently scanned photos
-        # that are waiting for metadata to load
-        enqueued_photos: dict[tuple[str, str, str], Photo] = {}
+        # that are waiting for metadata to load. Keys are the relative paths
+        # to the file from within the project dir
+        enqueued_photos: dict[str, Photo] = {}
 
         # Start the scanner
         Scanner().enqueue_thread(
@@ -243,6 +245,11 @@ class Preprocessor:
         s = self.scanned_counter
         a = self.added_counter
         u = self.updated_counter
+
+        # This message is for commit(), only if anything actually changed
+        if a + u > 0:
+            _log.info(f"Saved change{'' if a + u == 1 else 's'} to database")
+
         if s == 0:
             info = '0 photos found'
         elif s == a or s == u:
@@ -267,7 +274,7 @@ class Preprocessor:
     def _enqueue_next_file(
             self,
             session: Session,
-            enqueued_photos: dict[tuple[str, str, str], Photo]) -> bool:
+            enqueued_photos: dict[str, Photo]) -> bool:
         """
         Get the next file from the scanner queue. Send it to the preprocessing
         worker pool to get metadata, and load the corresponding Photo record
@@ -298,18 +305,14 @@ class Preprocessor:
         # Update counter
         self.scanned_counter += 1
 
-        # Send the photo to the preprocessing worker pool to load its metadata
-        self._photo_worker_pool.add(
-            self.load_metadata,
-            str(self.cfg.rel_path(file)),
-            file
-        )
+        rel_path = str(self.cfg.rel_path(file))
 
-        # Extract the date, group, and file name
-        date, group, file_name = file.parts[-3:]
+        # Send the photo to the preprocessing worker pool to load its metadata
+        self._photo_worker_pool.add(self.load_metadata, rel_path, file)
 
         # Load the photo from the database
         try:
+            date, group, file_name = file.parts[-3:]
             db_photo = session.get(Photo, (date, group, file_name))
 
             # If the photo isn't in the database yet, make a new record
@@ -319,13 +322,11 @@ class Preprocessor:
                 db_photo = Photo(
                     date=date,
                     group=group,
-                    file_name=file_name,
-                    camera=Camera(),
-                    lens=Lens()
+                    file_name=file_name
                 )
 
             # Save this db photo record until its metadata finishes loading
-            enqueued_photos[(date, group, file_name)] = db_photo
+            enqueued_photos[rel_path] = db_photo
         except SQLAlchemyError as e:
             _log.error(f'Error accessing database record for '
                        f'"{self.cfg.rel_path(file)}": {e}')
@@ -336,7 +337,7 @@ class Preprocessor:
     def _apply_metadata(
             self,
             session: Session,
-            enqueued_photos: dict[tuple[str, str, str], Photo]) -> bool:
+            enqueued_photos: dict[str, Photo]) -> bool:
         """
         Get the next PhotoMetadata record from the preprocessing workers. Apply
         any changes to the corresponding database record, and flush those
@@ -365,25 +366,53 @@ class Preprocessor:
                 not self._metadata_queue.empty()
 
         # Find the photo associated with this metadata
-        db_photo = enqueued_photos.pop((metadata.date,
-                                        metadata.group,
-                                        metadata.file_name))
+        db_photo = enqueued_photos.pop(metadata.path_str())
 
+        ##################################################
         # Apply the metadata, and flush changes to DB (but don't commit yet)
+
         try:
-            metadata.apply_to_db_photo(db_photo)
-            session.add(db_photo)
+            # Apply the metadata for the photo
+            metadata.apply_photo_metadata(db_photo)
 
-            # Update counter
-            if db_photo in session.new:
+            # Check whether this record is new or already in the database
+            if inspect(db_photo).transient:
+                # For a new record, get a Lens and Camera based on the
+                # metadata. If there is already a matching Lens/Camera in the
+                # db, use that. If not, make new records
+                camera = metadata.get_camera(session)
+                if camera is None:
+                    camera = metadata.create_camera()
+                db_photo.camera = camera
+
+                lens = metadata.get_lens(session)
+                if lens is None:
+                    lens = metadata.create_lens()
+                db_photo.lens = lens
+
+                # Add the new Photo record to the session
+                session.add(db_photo)
+
+                # Update counter for new Photo record
                 self.added_counter += 1
-            elif session.is_modified(db_photo):
-                self.updated_counter += 1
+            else:
+                # For an existing record, if the Lens or Camera data changed,
+                # replace them with new records. That way other photos linking
+                # to the original Camera/Lens aren't inadvertently changed too
+                if not metadata.matches_camera(db_photo.camera):
+                    db_photo.camera = metadata.create_camera()
+                if not metadata.matches_lens(db_photo.lens):
+                    db_photo.lens = metadata.create_lens()
 
-            session.commit()
+                # Update counter if anything changed
+                if session.is_modified(db_photo):
+                    self.updated_counter += 1
+
+            # Flush changes to save them (but don't commit yet)
+            session.flush()
         except SQLAlchemyError as e:
-            path = Path(metadata.date) / metadata.group / metadata.file_name
-            _log.error(f'Error accessing database record for "{path}": {e}')
+            _log.error('Error creating/updating database record for '
+                       f'"{metadata.path_str()}": {e}')
             raise
 
         return True
