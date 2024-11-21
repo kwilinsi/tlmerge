@@ -472,24 +472,24 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
         # Thumbnail size params are optional. If it's not found, that's fine
         pass
 
-    # Set camera white balance if available
-    cam_wb_r, cam_wb_g1, cam_wb_b, cam_wb_g2 = 1, 1, 1, 1  # Used later
+    # Set white balance at the time of capture
     try:
-        cam_wb_r, cam_wb_g1, cam_wb_b, cam_wb_g2 = rpy_photo.camera_whitebalance
-        metadata.camera_wb_red = cam_wb_r
-        metadata.camera_wb_green1 = cam_wb_g1
-        metadata.camera_wb_blue = cam_wb_b
-        metadata.camera_wb_green2 = cam_wb_g2
+        r, g1, b, g2 = rpy_photo.camera_whitebalance
+        metadata.capture_wb_red = r
+        metadata.capture_wb_green1 = g1
+        metadata.capture_wb_blue = b
+        metadata.capture_wb_green2 = g2
     except LibRawError:
         pass
 
-    # Set photo daylight white balance, if available
+    # Set camera daylight white balance, if available
+    day_r, day_g1, day_b, day_g2 = 1, 1, 1, 1 # Used later
     try:
-        r, g1, b, g2 = rpy_photo.daylight_whitebalance
-        metadata.daylight_wb_red = r
-        metadata.daylight_wb_green1 = g1
-        metadata.daylight_wb_blue = b
-        metadata.daylight_wb_green2 = g2
+        day_r, day_g1, day_b, day_g2 = rpy_photo.daylight_whitebalance
+        metadata.camera_daylight_wb_red = day_r
+        metadata.camera_daylight_wb_green1 = day_g1
+        metadata.camera_daylight_wb_blue = day_b
+        metadata.camera_daylight_wb_green2 = day_g2
     except LibRawError:
         pass
 
@@ -501,9 +501,9 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
     metadata.black_level_green2 = g2
 
     # Set camera white level (i.e. saturation)
-    camera_wb = rpy_photo.camera_white_level_per_channel
-    if camera_wb is not None:
-        r, g1, b, g2 = camera_wb
+    camera_white_level = rpy_photo.camera_white_level_per_channel
+    if camera_white_level is not None:
+        r, g1, b, g2 = camera_white_level
     elif (white_level := rpy_photo.white_level) is not None:
         # Fall back to white_level only if camera level isn't found. Otherwise,
         # avoid using this value. See the comment here:
@@ -529,12 +529,12 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
     metadata.avg_blue = np.mean(blue_channel)
 
     # Use the same image to estimate the brightness percentiles. Correct each
-    # RGB value by the default camera white balance multipliers. (Use the
-    # camera multipliers instead of image-specific values to keep things
+    # RGB value by the default daylight white balance multipliers. (Use the
+    # daylight multipliers instead of image-specific values to keep things
     # constant between images from the same camera).
-    brightness = ((red_channel * cam_wb_r +
-                   green_channel * (cam_wb_g1 + cam_wb_g2) / 2 +
-                   blue_channel * cam_wb_b) // 3).astype(np.uint8)
+    brightness = ((red_channel * day_r +
+                   green_channel * (day_g1 + day_g2) / 2 +
+                   blue_channel * day_b) // 3).astype(np.uint8)
 
     metadata.brightness_min = np.min(brightness)
     metadata.brightness_max = np.max(brightness)

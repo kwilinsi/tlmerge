@@ -23,10 +23,10 @@ _PHOTO_ATTRIBUTES = (
     'height',
     'thumb_width',
     'thumb_height',
-    'daylight_wb_red',
-    'daylight_wb_green1',
-    'daylight_wb_blue',
-    'daylight_wb_green2',
+    'capture_wb_red',
+    'capture_wb_green1',
+    'capture_wb_blue',
+    'capture_wb_green2',
     'avg_red',
     'avg_green',
     'avg_blue',
@@ -58,10 +58,10 @@ _PHOTO_ATTRIBUTES = (
 _CAMERA_ATTRIBUTES = (
     'make',
     'model',
-    'wb_red',
-    'wb_green1',
-    'wb_blue',
-    'wb_green2'
+    'daylight_wb_red',
+    'daylight_wb_green1',
+    'daylight_wb_blue',
+    'daylight_wb_green2'
 )
 
 _LENS_ATTRIBUTES = (
@@ -118,10 +118,10 @@ class PhotoMetadata:
     thumb_height: int | None
 
     # White balance
-    daylight_wb_red: float | None
-    daylight_wb_green1: float | None
-    daylight_wb_blue: float | None
-    daylight_wb_green2: float | None
+    capture_wb_red: float | None
+    capture_wb_green1: float | None
+    capture_wb_blue: float | None
+    capture_wb_green2: float | None
     avg_red: float
     avg_green: float
     avg_blue: float
@@ -156,10 +156,10 @@ class PhotoMetadata:
     # Camera data
     camera_make: str
     camera_model: str
-    camera_wb_red: float | None
-    camera_wb_green1: float | None
-    camera_wb_blue: float | None
-    camera_wb_green2: float | None
+    camera_daylight_wb_red: float | None
+    camera_daylight_wb_green1: float | None
+    camera_daylight_wb_blue: float | None
+    camera_daylight_wb_green2: float | None
 
     # Lens data
     lens_make: str | None
@@ -234,10 +234,10 @@ class PhotoMetadata:
         return session.scalar(select(Camera).where(
             Camera.make == self.camera_make,
             Camera.model == self.camera_model,
-            Camera.wb_red == self.camera_wb_red,
-            Camera.wb_green1 == self.camera_wb_green1,
-            Camera.wb_blue == self.camera_wb_blue,
-            Camera.wb_green2 == self.camera_wb_green2
+            Camera.daylight_wb_red == self.camera_daylight_wb_red,
+            Camera.daylight_wb_green1 == self.camera_daylight_wb_green1,
+            Camera.daylight_wb_blue == self.camera_daylight_wb_blue,
+            Camera.daylight_wb_green2 == self.camera_daylight_wb_green2
         ))
 
     def get_lens(self, session: Session) -> Lens | None:
@@ -271,10 +271,10 @@ class PhotoMetadata:
         return Camera(
             make=self.camera_make,
             model=self.camera_model,
-            wb_red=self.camera_wb_red,
-            wb_green1=self.camera_wb_green1,
-            wb_blue=self.camera_wb_blue,
-            wb_green2=self.camera_wb_green2
+            daylight_wb_red=self.camera_daylight_wb_red,
+            daylight_wb_green1=self.camera_daylight_wb_green1,
+            daylight_wb_blue=self.camera_daylight_wb_blue,
+            daylight_wb_green2=self.camera_daylight_wb_green2
         )
 
     def create_lens(self) -> Lens:

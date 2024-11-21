@@ -20,11 +20,11 @@ class Camera(Base):
     make: Mapped[str] = mapped_column(String(MAX_CAMERA_MAKE_LENGTH))
     model: Mapped[str] = mapped_column(String(MAX_CAMERA_MODEL_LENGTH))
 
-    # White balance
-    wb_red: Mapped[float | None] = mapped_column(Float())
-    wb_green1: Mapped[float | None] = mapped_column(Float())
-    wb_blue: Mapped[float | None] = mapped_column(Float())
-    wb_green2: Mapped[float | None] = mapped_column(Float())
+    # The daylight white balance coefficients for this camera model
+    daylight_wb_red: Mapped[float | None] = mapped_column(Float())
+    daylight_wb_green1: Mapped[float | None] = mapped_column(Float())
+    daylight_wb_blue: Mapped[float | None] = mapped_column(Float())
+    daylight_wb_green2: Mapped[float | None] = mapped_column(Float())
 
     # Photo relationship: one-to-many
     photos: Mapped[list["Photo"]] = relationship(  # noqa
@@ -33,7 +33,8 @@ class Camera(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            make, model, wb_red, wb_green1, wb_blue, wb_green2,
+            make, model, daylight_wb_red, daylight_wb_green1,
+            daylight_wb_blue, daylight_wb_green2,
             name='all_unique'
         ),
     )

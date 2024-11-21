@@ -5,7 +5,6 @@ from pathlib import Path
 from exiftool import ExifToolHelper
 
 from tlmerge.conf import CONFIG
-from tlmerge.db import Camera, Lens, Photo
 from .metadata import PhotoMetadata
 
 

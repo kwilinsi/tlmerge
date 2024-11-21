@@ -61,11 +61,13 @@ class Photo(Base):
     thumb_width: Mapped[int | None] = mapped_column(Integer())
     thumb_height: Mapped[int | None] = mapped_column(Integer())
 
-    # White balance
-    daylight_wb_red: Mapped[float | None] = mapped_column(Float())
-    daylight_wb_green1: Mapped[float | None] = mapped_column(Float())
-    daylight_wb_blue: Mapped[float | None] = mapped_column(Float())
-    daylight_wb_green2: Mapped[float | None] = mapped_column(Float())
+    # White balance selected in-camera when the photo was captured
+    capture_wb_red: Mapped[float | None] = mapped_column(Float())
+    capture_wb_green1: Mapped[float | None] = mapped_column(Float())
+    capture_wb_blue: Mapped[float | None] = mapped_column(Float())
+    capture_wb_green2: Mapped[float | None] = mapped_column(Float())
+
+    # Average per-channel values; useful for grey-world auto white balance
     avg_red: Mapped[float] = mapped_column(Float())
     avg_green: Mapped[float] = mapped_column(Float())
     avg_blue: Mapped[float] = mapped_column(Float())
