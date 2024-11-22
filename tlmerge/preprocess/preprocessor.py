@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 import rawpy
 # noinspection PyUnresolvedReferences
-from rawpy import LibRawError, RawPy, ThumbFormat
+from rawpy import LibRawError, LibRawFileUnsupportedError, RawPy, ThumbFormat
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import DB, Photo
@@ -53,7 +53,7 @@ class Preprocessor:
 
         # Define the results queue that receives metadata for each photo and
         # the worker pool that obtains that metadata
-        self._metadata_queue: Queue[PhotoMetadata] = Queue(
+        self._metadata_queue: Queue[PhotoMetadata | str] = Queue(
             maxsize=self.QUEUE_MAX_SIZE
         )
         self._photo_worker_pool = WorkerPool(
@@ -308,7 +308,7 @@ class Preprocessor:
         rel_path = str(self.cfg.rel_path(file))
 
         # Send the photo to the preprocessing worker pool to load its metadata
-        self._photo_worker_pool.add(self.load_metadata, rel_path, file)
+        self._photo_worker_pool.add(self._load_metadata, rel_path, file)
 
         # Load the photo from the database
         try:
@@ -354,7 +354,7 @@ class Preprocessor:
 
         # Get the next metadata record from the worker pool
         try:
-            metadata: PhotoMetadata = self._metadata_queue.get_nowait()
+            metadata: PhotoMetadata | str = self._metadata_queue.get_nowait()
         except Empty:
             # Return False (the "done" signal) only if the worker pool
             # finished, and the queue is indeed empty. Re-checking empty() here
@@ -364,6 +364,16 @@ class Preprocessor:
             # after pool is_finished().
             return not self._photo_worker_pool.is_finished() or \
                 not self._metadata_queue.empty()
+
+        # If the returned metadata object is a string, then it's just the
+        # relative path to the file. This indicates that there was an error
+        # (namely that the file type isn't supported). Remove it from the
+        # enqueued photos dict, and exit
+        if isinstance(metadata, str):
+            if enqueued_photos.pop(metadata, None) is None:
+                _log.warning(f"Unexpected: couldn't find enqueued db photo "
+                             f"record matching {metadata} to delete it")
+            return True
 
         # Find the photo associated with this metadata
         db_photo = enqueued_photos.pop(metadata.path_str())
@@ -418,13 +428,17 @@ class Preprocessor:
 
         return True
 
-    def load_metadata(self, file: Path) -> PhotoMetadata:
+    def _load_metadata(self, file: Path) -> PhotoMetadata | str:
         """
         Load all the relevant metadata for a photo to create/update its
         database record. This includes data from both PyExifTool and RawPy.
 
+        If the image is not valid (that is, it can't be processed by RawPy),
+        this logs a warning and returns the relative file path.
+
         :param file: The path to the photo file.
-        :return: All the relevant, available metadata.
+        :return: All the relevant, available metadata, or None if the given
+         file is not a valid RAW image file.
         """
 
         _log.debug(f'Loading metadata for {self.cfg.rel_path(file)}')
@@ -432,12 +446,19 @@ class Preprocessor:
         # Create the metadata data object for storing all the values
         metadata = PhotoMetadata(*file.parts[-3:])
 
+        # Open the photo in RawPy (i.e. LibRaw) to get more info. Do this first
+        # to make sure it's a valid raw file
+        try:
+            with rawpy.imread(str(file)) as rpy_photo:
+                _apply_libraw_metadata(rpy_photo, metadata)
+        except LibRawFileUnsupportedError:
+            rel_path = str(self.cfg.rel_path(file))
+            _log.warning(f'Skipping "{rel_path}": '
+                         'unsupported file format or not a RAW file')
+            return rel_path
+
         # Extract and record the EXIF data
         self._exif_worker.extract(file).record_metadata(metadata)
-
-        # Open the photo in RawPy (i.e. LibRaw) to get more info
-        with rawpy.imread(str(file)) as rpy_photo:
-            _apply_libraw_metadata(rpy_photo, metadata)
 
         # Return the complete metadata object
         return metadata
