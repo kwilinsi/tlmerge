@@ -222,16 +222,16 @@ class PhotoMetadata:
                 return False
         return True
 
-    def get_camera(self, session: Session) -> Camera | None:
+    def get_camera_id(self, session: Session) -> int | None:
         """
-        Get the Camera record in the database matching this metadata. If there
-        is no such match, return None.
+        Get the id of the Camera record in the database matching this metadata.
+        If there is no such Camera, return None.
 
         :param session: A session connected to the database.
-        :return: The Camera record matching this metadata, or None.
+        :return: The id of the matching Camera, or None if there's no match.
         """
 
-        return session.scalar(select(Camera).where(
+        return session.scalar(select(Camera.id).where(
             Camera.make == self.camera_make,
             Camera.model == self.camera_model,
             Camera.daylight_wb_red == self.camera_daylight_wb_red,
@@ -240,16 +240,16 @@ class PhotoMetadata:
             Camera.daylight_wb_green2 == self.camera_daylight_wb_green2
         ))
 
-    def get_lens(self, session: Session) -> Lens | None:
+    def get_lens_id(self, session: Session) -> int | None:
         """
-        Get the Lens record in the database matching this metadata. If there
-        is no such match, return None.
+        Get the id of the Lens record in the database matching this metadata.
+        If there is no such Lens, return None.
 
         :param session: A session connected to the database.
-        :return: The Lens record matching this metadata, or None.
+        :return: The id of the matching Lens, or None if there's no match.
         """
 
-        return session.scalar(select(Lens).where(
+        return session.scalar(select(Lens.id).where(
             Lens.make == self.lens_make,
             Lens.model == self.lens_model,
             Lens.spec == self.lens_spec,

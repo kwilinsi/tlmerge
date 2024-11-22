@@ -380,15 +380,16 @@ class Preprocessor:
                 # For a new record, get a Lens and Camera based on the
                 # metadata. If there is already a matching Lens/Camera in the
                 # db, use that. If not, make new records
-                camera = metadata.get_camera(session)
-                if camera is None:
-                    camera = metadata.create_camera()
-                db_photo.camera = camera
+                if (camera_id := metadata.get_camera_id(session)) is not None:
+                    db_photo.camera_id = camera_id
+                else:
+                    db_photo.camera = metadata.create_camera()
 
-                lens = metadata.get_lens(session)
-                if lens is None:
-                    lens = metadata.create_lens()
-                db_photo.lens = lens
+                # Same for lens
+                if (lens_id := metadata.get_lens_id(session)) is not None:
+                    db_photo.lens_id = lens_id
+                else:
+                    db_photo.lens = metadata.create_lens()
 
                 # Add the new Photo record to the session
                 session.add(db_photo)
@@ -483,7 +484,7 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
         pass
 
     # Set camera daylight white balance, if available
-    day_r, day_g1, day_b, day_g2 = 1, 1, 1, 1 # Used later
+    day_r, day_g1, day_b, day_g2 = 1, 1, 1, 1  # Used later
     try:
         day_r, day_g1, day_b, day_g2 = rpy_photo.daylight_whitebalance
         metadata.camera_daylight_wb_red = day_r
