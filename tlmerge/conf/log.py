@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Literal
 import sys
+import warnings
 
 import coloredlogs
 import logging.handlers
@@ -77,6 +78,15 @@ def configure_log(file: Path | None,
 
     # Suppress debug messages from PIL that spam the logs with EXIF data
     logging.getLogger('PIL').setLevel(logging.INFO)
+
+    # Capture warnings in logger
+    logging.captureWarnings(True)
+
+    # Adjust warning filter based on log level
+    if console == 'silent':
+        warnings.simplefilter('ignore')
+    elif console == 'verbose':
+        warnings.simplefilter('always')
 
     # Log a success message
     if to_file and to_console:
