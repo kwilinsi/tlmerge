@@ -5,6 +5,7 @@ from pathlib import Path
 from queue import Queue
 from random import shuffle
 from threading import Event, Thread
+from typing import Literal
 
 from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
 from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
@@ -211,17 +212,19 @@ class Scanner:
     def iter_photos(
             self,
             group_dir: Path,
-            randomize: bool = False) -> Generator[Path, None, None]:
+            order: Literal['random', 'sort', 'default'] = 'default') -> \
+            Generator[Path, None, None]:
         """
         Iterate over all the photos in a particular group directory.
 
         :param group_dir: The group directory containing the photos to retrieve.
-        :param randomize: Whether to randomize the order in which the photos
-         are returned. This overrides `self.order` if True. Defaults to False.
+        :param order: Whether to randomize the order of the photos ('random'),
+         sort them ('sort'), or defer to `self.order` ('default'). Defaults to
+         'default'.
         :return: A generator yielding paths to matching photo files.
         """
 
-        # Determine which (if any) photos to exclude and whether to sample
+        # Determine which (if any) photos to exclude
         if self.scan_all:
             excluded_photos = []
         else:
@@ -241,9 +244,9 @@ class Scanner:
         ))
 
         # If order doesn't matter, just yield photos from the generator
-        if not randomize and not self.order:
+        if order == 'default' and not self.order:
             yield from generator
-        elif randomize:
+        elif order == 'random':
             # If randomized, shuffle
             photos = list(generator)
             shuffle(photos)
@@ -272,8 +275,7 @@ class Scanner:
 
             # If randomly sampling, defer to the randomized iterator
             if s_random:
-                for p in self.iter_all_photos_random(s_size, log_summary):
-                    yield p
+                yield from self.iter_all_photos_random(s_size, log_summary)
                 return
 
         # Initialize counters (only used if the log summary is enabled)
@@ -290,7 +292,10 @@ class Scanner:
                 group_photo_counter, groups = 0, groups + 1
 
                 # Iterate over each photo
-                for photo in self.iter_photos(group_dir):
+                for photo in self.iter_photos(
+                        group_dir,
+                        order='sort' if sample else 'default'
+                ):
                     yield photo
                     photos += 1
                     group_photo_counter += 1
@@ -435,7 +440,7 @@ class Scanner:
                 else:
                     # Load all the photos from the next group
                     photos = list(self.iter_photos(
-                        groups.pop(), randomize=True
+                        groups.pop(), order='random'
                     ))
                     group_dirs[g] = (photos, groups)
                 continue
