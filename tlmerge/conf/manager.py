@@ -236,11 +236,10 @@ class ConfigManager:
         counter = 0
 
         # Importing here to avoid circular import ¯\_(ツ)_/¯
-        from tlmerge.scan import Scanner
-        scanner = Scanner(scan_all=True)
+        from tlmerge.scan import iter_all_dates, iter_all_groups
 
         # Scan each date directory
-        for date_dir in scanner.iter_dates():
+        for date_dir in iter_all_dates():
             found_any_files = False
             file, n = _find_and_apply_config_file(
                 date_dir, self.modifiable_root, date_dir.name
@@ -257,7 +256,7 @@ class ConfigManager:
             cfg = CONFIG.get_modifiable(date_dir.name)
 
             # Scan each group directory within this date
-            for group_dir in scanner.iter_groups(date_dir):
+            for group_dir in iter_all_groups(date_dir):
                 file, n = _find_and_apply_config_file(
                     group_dir, cfg, date_dir.name, group_dir.name
                 )

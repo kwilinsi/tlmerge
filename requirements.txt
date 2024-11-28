@@ -1,5 +1,6 @@
 aiosqlite
 annotated-types
+colorama
 coloredlogs
 greenlet
 humanfriendly
@@ -7,6 +8,7 @@ imageio
 numpy
 pillow
 platformdirs
+progress-table
 pydantic
 pydantic_core
 PyExifTool

@@ -53,7 +53,7 @@ def main():
 
     # Run the selected mode
     try:
-        run(args.mode, args.project)
+        run(args.mode)
     except Exception as e:  # noqa
         log.critical(f"Fatal error while running '{args.mode}': {e}",
                      exc_info=True)

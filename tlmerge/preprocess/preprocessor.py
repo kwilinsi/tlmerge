@@ -14,7 +14,7 @@ from rawpy import LibRawError, LibRawFileUnsupportedError, RawPy, ThumbFormat
 
 from tlmerge.conf import CONFIG
 from tlmerge.db import DB, Photo
-from tlmerge.scan import Scanner
+from tlmerge.scan import enqueue_thread, ScanMetrics
 from .exif import ExifWorker
 from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
 from .metadata import PhotoMetadata
@@ -214,9 +214,15 @@ class Preprocessor:
         # to the file from within the project dir
         enqueued_photos: dict[str, Photo] = {}
 
+        # Initialize the progress table and associated progress bar
+        metrics, table, pbar = ScanMetrics.with_default_progress_table(
+            'Preprocessing...', self.cfg.sample, externally_managed_pbar=True
+        )
+
         # Start the scanner
-        Scanner().enqueue_thread(
+        enqueue_thread(
             output=self._scanning_queue,
+            metrics=metrics,
             name='prp-scn-wkr',
             cancel_event=self.cancel_event
         )
