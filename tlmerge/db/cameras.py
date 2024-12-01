@@ -27,7 +27,7 @@ class Camera(Base):
     daylight_wb_green2: Mapped[float | None] = mapped_column(Float())
 
     # Photo relationship: one-to-many
-    photos: Mapped[list["Photo"]] = relationship(  # noqa
+    photos: Mapped[list['Photo']] = relationship(  # noqa
         back_populates='camera'
     )
 

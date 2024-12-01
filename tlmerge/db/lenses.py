@@ -35,7 +35,7 @@ class Lens(Base):
     effective_max_aperture: Mapped[float | None] = mapped_column(Float())
 
     # Photo relationship: one-to-many
-    photos: Mapped[list["Photo"]] = relationship(back_populates='lens')  # noqa
+    photos: Mapped[list['Photo']] = relationship(back_populates='lens')  # noqa
 
     __table_args__ = (
         CheckConstraint(

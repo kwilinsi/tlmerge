@@ -5,19 +5,23 @@ from threading import Event, local
 
 import imageio.v3 as iio
 import numpy as np
+from progress_table import ProgressTable
+from progress_table.v1.progress_table import TableProgressBar
+import rawpy
+# noinspection PyUnresolvedReferences
+from rawpy import (LibRawError, LibRawFileUnsupportedError, LibRawIOError,
+                   RawPy, ThumbFormat)
 from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-import rawpy
-# noinspection PyUnresolvedReferences
-from rawpy import LibRawError, LibRawFileUnsupportedError, RawPy, ThumbFormat
 
-from tlmerge.conf import CONFIG
+from tlmerge.conf import CONFIG, buffer_console_log
 from tlmerge.db import DB, Photo
-from tlmerge.scan import enqueue_thread, ScanMetrics
+from tlmerge.scan import enqueue_thread
 from .exif import ExifWorker
-from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
 from .metadata import PhotoMetadata
+from .metrics import PreprocessingMetrics
+from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
 
 _log = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ class Preprocessor:
     # avoids a possible memory issue if (a) there are tens of thousands of
     # photos, and (b) a bottleneck somewhere (such as with the database worker)
     # leads to some queues filling up quickly
-    QUEUE_MAX_SIZE: int = 100
+    QUEUE_MAX_SIZE: int = 300
 
     def __init__(self):
         # Determine the number of workers to use
@@ -53,20 +57,25 @@ class Preprocessor:
 
         # Define the results queue that receives metadata for each photo and
         # the worker pool that obtains that metadata
-        self._metadata_queue: Queue[PhotoMetadata | str] = Queue(
+        self._metadata_queue: Queue[PhotoMetadata] = Queue(
             maxsize=self.QUEUE_MAX_SIZE
         )
         self._photo_worker_pool = WorkerPool(
             max_workers=self._determine_pool_worker_count(),
             name_prefix='prp-wkr-',
             results=self._metadata_queue,
-            on_close_hook=self._close_exif_worker
+            on_close_hook=self._close_exif_worker,
+            error_handler=self._handle_metadata_error,
+            task_queue_size=self.QUEUE_MAX_SIZE
         )
 
-        # Counters for database modification
-        self.added_counter = 0
-        self.updated_counter = 0
-        self.scanned_counter = 0
+        # Summary statistics
+        self._metrics: PreprocessingMetrics | None = None
+
+        # This dict stores database photo records from recently scanned photos
+        # that are waiting for metadata to load. Keys are the relative paths
+        # to the file from within the project dir
+        self._enqueued_photos: dict[str, Photo] = {}
 
     @property
     def _exif_worker(self) -> ExifWorker:
@@ -209,78 +218,52 @@ class Preprocessor:
         :raises BaseException: If the preprocessing step fails in any way.
         """
 
-        # This dict stores database photo records from recently scanned photos
-        # that are waiting for metadata to load. Keys are the relative paths
-        # to the file from within the project dir
-        enqueued_photos: dict[str, Photo] = {}
-
-        # Initialize the progress table and associated progress bar
-        metrics, table, pbar = ScanMetrics.with_default_progress_table(
-            'Preprocessing...', self.cfg.sample, externally_managed_pbar=True
+        # Initialize the metrics, progress table, and progress bar
+        table, pbar = PreprocessingMetrics.def_progress_table(
+            self.cfg.sample_size
         )
+        self._metrics = PreprocessingMetrics(table, pbar)
 
-        # Start the scanner
-        enqueue_thread(
-            output=self._scanning_queue,
-            metrics=metrics,
-            name='prp-scn-wkr',
-            cancel_event=self.cancel_event
-        )
+        # Buffer log messages to not interfere with the progress table
+        with buffer_console_log():
 
-        # Start the preprocessing worker pool
-        self._photo_worker_pool.start()
+            # Start the scanner
+            enqueue_thread(
+                output=self._scanning_queue,
+                metrics=self._metrics,
+                name='prp-scn-wkr',
+                cancel_event=self.cancel_event
+            )
 
-        # FIRST LOOP: alternate between checking scanner for new photo
-        # files and checking worker pool for new metadata, repeating until
-        # scanner is exhausted
-        while self._enqueue_next_file(session, enqueued_photos):
-            # Get next metadata from the preprocessing worker pool
-            self._apply_metadata(session, enqueued_photos)
+            # Start the preprocessing worker pool
+            self._photo_worker_pool.start()
 
-        # Close the worker pool: no more tasks to add
-        self._photo_worker_pool.close()
+            # FIRST LOOP: alternate between checking scanner for new photo
+            # files and checking worker pool for new metadata, repeating until
+            # scanner is exhausted
+            while self._enqueue_next_file(session):
+                # Get next metadata from the preprocessing worker pool
+                self._apply_metadata(session)
 
-        # SECOND LOOP: process all remaining metadata records
-        while self._apply_metadata(session, enqueued_photos):
-            pass
+            # Close the worker pool: no more tasks to add
+            self._photo_worker_pool.close()
+
+            # SECOND LOOP: process all remaining metadata records
+            while self._apply_metadata(session):
+                pass
+
+            # Close the progress table; then release the log buffer
+            table.close()
 
         # Commit db changes
         session.commit()
 
         # Log results
-        s = self.scanned_counter
-        a = self.added_counter
-        u = self.updated_counter
-
-        # This message is for commit(), only if anything actually changed
-        if a + u > 0:
-            _log.info(f"Saved change{'' if a + u == 1 else 's'} to database")
-
-        if s == 0:
-            info = '0 photos found'
-        elif s == a or s == u:
-            info = (f"scanned and {'added' if s == a else 'updated'} "
-                    f"{s} photo{'' if s == 1 else 's'} "
-                    f"{'to' if s == a else 'in'} the database")
-        elif 0 == a == u:
-            info = f"scanned {s} photo{'' if s == 1 else 's'}; no changes made"
-        elif a == 0:
-            info = (f"scanned {s} photos and updated "
-                    f"{u} database entr{'y' if u == 1 else 'ies'}")
-        elif u == 0:
-            info = (f"scanned {s} photos and added "
-                    f"{a} new database entr{'y' if a == 1 else 'ies'}")
-        else:
-            info = (f"scanned {s} photos, adding {a} new "
-                    f"entr{'y' if a == 1 else 'ies'} in the database and "
-                    f"updating {u} existing entr{'y' if u == 1 else 'ies'}")
-
-        _log.info(f'Finished preprocessing: {info}')
+        self._metrics.log_preprocessing_summary()
 
     def _enqueue_next_file(
             self,
-            session: Session,
-            enqueued_photos: dict[str, Photo]) -> bool:
+            session: Session) -> bool:
         """
         Get the next file from the scanner queue. Send it to the preprocessing
         worker pool to get metadata, and load the corresponding Photo record
@@ -289,8 +272,6 @@ class Preprocessor:
         If the queue is empty, do nothing.
 
         :param session: The current database session.
-        :param enqueued_photos: The dictionary in which database records are
-         stored while waiting for their metadata.
         :return: False if and only if the scanner finished, and all incoming
          photo files have been submitted for preprocessing.
         """
@@ -308,13 +289,8 @@ class Preprocessor:
         if file is None:
             return False
 
-        # Update counter
-        self.scanned_counter += 1
-
+        # This is an identifier string for the file
         rel_path = str(self.cfg.rel_path(file))
-
-        # Send the photo to the preprocessing worker pool to load its metadata
-        self._photo_worker_pool.add(self._load_metadata, rel_path, file)
 
         # Load the photo from the database
         try:
@@ -332,18 +308,20 @@ class Preprocessor:
                 )
 
             # Save this db photo record until its metadata finishes loading
-            enqueued_photos[rel_path] = db_photo
+            self._enqueued_photos[rel_path] = db_photo
         except SQLAlchemyError as e:
             _log.error(f'Error accessing database record for '
                        f'"{self.cfg.rel_path(file)}": {e}')
             raise
 
+        # Send the photo to the preprocessing worker pool to load its metadata
+        self._photo_worker_pool.add(self._load_metadata, rel_path, file)
+
         return True
 
     def _apply_metadata(
             self,
-            session: Session,
-            enqueued_photos: dict[str, Photo]) -> bool:
+            session: Session) -> bool:
         """
         Get the next PhotoMetadata record from the preprocessing workers. Apply
         any changes to the corresponding database record, and flush those
@@ -352,15 +330,17 @@ class Preprocessor:
         If the metadata queue is empty, do nothing.
 
         :param session: The current database session.
-        :param enqueued_photos: The dictionary in which database records are
-         stored while waiting for their metadata.
+        :param metrics: The preprocessing metrics tracking summary statistics.
+        :param table: The progress table with summary statistics.
+        :param pbar: The progress bar associated with the table to update
+         whenever a photo is finished.
         :return: False if and only if the worker pool finished, and there are no
          more metadata records to process.
         """
 
         # Get the next metadata record from the worker pool
         try:
-            metadata: PhotoMetadata | str = self._metadata_queue.get_nowait()
+            metadata: PhotoMetadata = self._metadata_queue.get_nowait()
         except Empty:
             # Return False (the "done" signal) only if the worker pool
             # finished, and the queue is indeed empty. Re-checking empty() here
@@ -371,18 +351,8 @@ class Preprocessor:
             return not self._photo_worker_pool.is_finished() or \
                 not self._metadata_queue.empty()
 
-        # If the returned metadata object is a string, then it's just the
-        # relative path to the file. This indicates that there was an error
-        # (namely that the file type isn't supported). Remove it from the
-        # enqueued photos dict, and exit
-        if isinstance(metadata, str):
-            if enqueued_photos.pop(metadata, None) is None:
-                _log.warning(f"Unexpected: couldn't find enqueued db photo "
-                             f"record matching {metadata} to delete it")
-            return True
-
         # Find the photo associated with this metadata
-        db_photo = enqueued_photos.pop(metadata.path_str())
+        db_photo = self._enqueued_photos.pop(metadata.path_str())
 
         ##################################################
         # Apply the metadata, and flush changes to DB (but don't commit yet)
@@ -410,8 +380,8 @@ class Preprocessor:
                 # Add the new Photo record to the session
                 session.add(db_photo)
 
-                # Update counter for new Photo record
-                self.added_counter += 1
+                # Update metrics
+                self._metrics.preprocessed_photo(metadata.date, is_new=True)
             else:
                 # For an existing record, if the Lens or Camera data changed,
                 # replace them with new records. That way other photos linking
@@ -421,9 +391,11 @@ class Preprocessor:
                 if not metadata.matches_lens(db_photo.lens):
                     db_photo.lens = metadata.create_lens()
 
-                # Update counter if anything changed
-                if session.is_modified(db_photo):
-                    self.updated_counter += 1
+                # Update metrics
+                self._metrics.preprocessed_photo(
+                    metadata.date,
+                    is_updated=session.is_modified(db_photo)
+                )
 
             # Flush changes to save them (but don't commit yet)
             session.flush()
@@ -434,7 +406,7 @@ class Preprocessor:
 
         return True
 
-    def _load_metadata(self, file: Path) -> PhotoMetadata | str:
+    def _load_metadata(self, file: Path) -> PhotoMetadata:
         """
         Load all the relevant metadata for a photo to create/update its
         database record. This includes data from both PyExifTool and RawPy.
@@ -443,8 +415,8 @@ class Preprocessor:
         this logs a warning and returns the relative file path.
 
         :param file: The path to the photo file.
-        :return: All the relevant, available metadata, or None if the given
-         file is not a valid RAW image file.
+        :return: All the relevant, available metadata.
+        :raises LibRawError: If something goes wrong with RawPy/LibRaw.
         """
 
         _log.debug(f'Loading metadata for {self.cfg.rel_path(file)}')
@@ -454,20 +426,47 @@ class Preprocessor:
 
         # Open the photo in RawPy (i.e. LibRaw) to get more info. Do this first
         # to make sure it's a valid raw file
-        try:
-            with rawpy.imread(str(file)) as rpy_photo:
-                _apply_libraw_metadata(rpy_photo, metadata)
-        except LibRawFileUnsupportedError:
-            rel_path = str(self.cfg.rel_path(file))
-            _log.warning(f'Skipping "{rel_path}": '
-                         'unsupported file format or not a RAW file')
-            return rel_path
+        with rawpy.imread(str(file)) as rpy_photo:
+            _apply_libraw_metadata(rpy_photo, metadata)
 
         # Extract and record the EXIF data
         self._exif_worker.extract(file).record_metadata(metadata)
 
         # Return the complete metadata object
         return metadata
+
+    def _handle_metadata_error(self, error: Exception, rel_path: str) -> bool:
+        """
+        Handle an exception raised by `_load_metadata()` when run in the
+        worker pool. If it's not a problem, return True to ignore it.
+        Otherwise, log the error, and return False.
+
+        :param error: The exception.
+        :param rel_path: This is the identifier string given by the worker
+         pool for identifying the task. It should be the relative path to
+         the photo that failed.
+        :return: True if and only if the exception is handled successfully.
+        """
+
+        # For invalid files that can't be read by RawPy/LibRaw, just update
+        # the metrics
+        if isinstance(error, LibRawFileUnsupportedError) or \
+                isinstance(error, LibRawIOError):
+            self._metrics.invalid_photo_file(
+                date_str=Path(rel_path).parent.parent.name
+            )
+
+            # Delete the metadata record for this photo to avoid a memory leak
+            if self._enqueued_photos.pop(rel_path, None) is None:
+                _log.warning(f"Unexpected: couldn't find enqueued db photo "
+                             f"record matching \"{rel_path}\" to delete it")
+
+            # Successfully handled error
+            return True
+
+        # This exception can't be handled. Log it, and return False
+        self._metrics.log_error(error, rel_path)
+        return False
 
 
 def _apply_libraw_metadata(rpy_photo: RawPy,
@@ -552,9 +551,9 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
     red_channel = image[:, :, 0].ravel()
     green_channel = image[:, :, 1].ravel()
     blue_channel = image[:, :, 2].ravel()
-    metadata.avg_red = np.mean(red_channel)
-    metadata.avg_green = np.mean(green_channel)
-    metadata.avg_blue = np.mean(blue_channel)
+    metadata.avg_red = float(np.mean(red_channel))
+    metadata.avg_green = float(np.mean(green_channel))
+    metadata.avg_blue = float(np.mean(blue_channel))
 
     # Use the same image to estimate the brightness percentiles. Correct each
     # RGB value by the default daylight white balance multipliers. (Use the
@@ -564,20 +563,21 @@ def _apply_libraw_metadata(rpy_photo: RawPy,
                    green_channel * (day_g1 + day_g2) / 2 +
                    blue_channel * day_b) // 3).astype(np.uint8)
 
-    metadata.brightness_min = np.min(brightness)
-    metadata.brightness_max = np.max(brightness)
-    metadata.brightness_mean = np.mean(brightness)
-    metadata.brightness_stdev = np.std(brightness)
-    metadata.brightness_iqr = np.percentile(brightness, 75) - \
-                              np.percentile(brightness, 25)
+    metadata.brightness_min = int(np.min(brightness))
+    metadata.brightness_max = int(np.max(brightness))
+    metadata.brightness_mean = float(np.mean(brightness))
+    metadata.brightness_stdev = float(np.std(brightness))
+    metadata.brightness_iqr = float(
+        np.percentile(brightness, 75) - np.percentile(brightness, 25)
+    )
 
     percentiles = np.percentile(brightness, np.arange(10, 100, 10))
-    metadata.brightness_p10 = percentiles[0]
-    metadata.brightness_p20 = percentiles[1]
-    metadata.brightness_p30 = percentiles[2]
-    metadata.brightness_p40 = percentiles[3]
-    metadata.brightness_median = percentiles[4]
-    metadata.brightness_p60 = percentiles[5]
-    metadata.brightness_p70 = percentiles[6]
-    metadata.brightness_p80 = percentiles[7]
-    metadata.brightness_p90 = percentiles[8]
+    metadata.brightness_p10 = float(percentiles[0])
+    metadata.brightness_p20 = float(percentiles[1])
+    metadata.brightness_p30 = float(percentiles[2])
+    metadata.brightness_p40 = float(percentiles[3])
+    metadata.brightness_median = float(percentiles[4])
+    metadata.brightness_p60 = float(percentiles[5])
+    metadata.brightness_p70 = float(percentiles[6])
+    metadata.brightness_p80 = float(percentiles[7])
+    metadata.brightness_p90 = float(percentiles[8])

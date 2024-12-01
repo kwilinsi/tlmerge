@@ -475,6 +475,13 @@ class GlobalConfig(Config):
         # an argument, and a plan "--sample" flag doesn't clearly communicate
         # that the sample is being disabled
         self._sample = None if sample == '-1' else sample
+    
+    @property
+    def sample_size(self) -> int:
+        if self._sample is None:
+            return -1
+        else:
+            return int(self._sample.strip('~'))
 
     @property
     def database(self) -> Path | None:
@@ -594,6 +601,10 @@ class GlobalConfigView(ConfigView):
     @property
     def sample(self) -> str | None:
         return self._config.sample
+    
+    @property
+    def sample_size(self) -> int:
+        return self._config.sample_size
 
     @property
     def database(self) -> Path | None:

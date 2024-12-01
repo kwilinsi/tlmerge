@@ -31,12 +31,12 @@ class Photo(Base):
 
     # Camera and lens
     camera_id: Mapped[int] = mapped_column(ForeignKey("Cameras.id"))
-    camera: Mapped["Camera"] = relationship(  # noqa
+    camera: Mapped['Camera'] = relationship(  # noqa
         back_populates='photos',
         lazy='joined'
     )
     lens_id: Mapped[int] = mapped_column(ForeignKey("Lenses.id"))
-    lens: Mapped["Lens"] = relationship(  # noqa
+    lens: Mapped['Lens'] = relationship(  # noqa
         back_populates='photos',
         lazy='joined'
     )
@@ -83,6 +83,7 @@ class Photo(Base):
 
     # Overall brightness
     brightness_min: Mapped[int] = mapped_column(Integer())
+    brightness_max: Mapped[int] = mapped_column(Integer())
     brightness_p10: Mapped[float] = mapped_column(Float())
     brightness_p20: Mapped[float] = mapped_column(Float())
     brightness_p30: Mapped[float] = mapped_column(Float())
@@ -92,7 +93,6 @@ class Photo(Base):
     brightness_p70: Mapped[float] = mapped_column(Float())
     brightness_p80: Mapped[float] = mapped_column(Float())
     brightness_p90: Mapped[float] = mapped_column(Float())
-    brightness_max: Mapped[int] = mapped_column(Integer())
     brightness_mean: Mapped[float] = mapped_column(Float())
     brightness_stdev: Mapped[float] = mapped_column(Float())
     brightness_iqr: Mapped[float] = mapped_column(Float())

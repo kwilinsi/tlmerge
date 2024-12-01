@@ -138,7 +138,6 @@ class ScanMetrics:
         self._pbar: TableProgressBar = pbar
         self._externally_managed_pbar: bool = externally_managed_pbar
 
-
         # Map of dates to their row index in the progress table
         self._table_index: dict[str, int] = {}
 
@@ -147,23 +146,21 @@ class ScanMetrics:
         self._fixed_sample: bool = False
 
     @classmethod
-    def with_default_progress_table(cls,
-                                    pbar_label: str,
-                                    sample_size: int = -1,
-                                    **kwargs) -> \
-            tuple[ScanMetrics, ProgressTable, TableProgressBar]:
+    def def_progress_table(cls,
+                           pbar_label: str = 'Scanning...',
+                           sample_size: int = -1) -> \
+            tuple[ProgressTable, TableProgressBar]:
         """
-        Create a new ScanMetrics record using a default basic progress table.
-        The table has the required columns for ScanMetrics compatibility and
-        an info progress bar at the bottom.
+        Create a new ProgressTable and associated progress bar designed to
+        work with ScanMetrics. The table has the required columns for
+        ScanMetrics compatibility and an info bar at the bottom.
 
-        :param pbar_label: The text description for the progress bar.
+        :param pbar_label: The text description for the progress bar. Defaults
+         to 'Scanning...'.
         :param sample_size: Set the sample size if conducting a sample. If
          this is a positive integer, the progress bar shows exact progress,
          and the total is set to the sample size. Use any negative number 
          to indicate no sample. Defaults to -1.
-        :param kwargs: Additional arguments to pass to the ScanMetrics
-         constructor.
         :return: A new progress table and associated progress bar.
         :raises ValueError: If the sample size is 0.
         """
@@ -198,16 +195,16 @@ class ScanMetrics:
         )
 
         # Return with new ScanMetrics
-        return cls(table, pbar, **kwargs), table, pbar
+        return table, pbar
 
     @property
     def total_photos(self) -> int:
         """
-        Get an active counter of the total number of photos processed so far.
-        This is the number of processed files minus the number that were
+        Get an active counter of the total number of photos scanned so far.
+        This is the number of scanned files minus the number that were
         invalid (i.e. not parseable photos).
 
-        :return: The number of photos processed so far.
+        :return: The number of photos scanned so far.
         :raises RuntimeError: If accessed before starting the metrics.
         """
 
@@ -217,6 +214,21 @@ class ScanMetrics:
 
         with self._invalid_counter_lock:
             return self._total_files - self._invalid_files
+
+    @property
+    def total_files(self) -> int:
+        """
+        Get an active counter of the total number of files so far.
+
+        :return: The total number of files.
+        :raises RuntimeError: If accessed before starting the metrics.
+        """
+
+        if self._total_dates == -1:
+            raise RuntimeError('Cannot access total_photos before '
+                               'starting metrics.')
+
+        return self._total_files
 
     @property
     def total_groups(self) -> int:
@@ -294,12 +306,22 @@ class ScanMetrics:
     @property
     def table(self) -> ProgressTable:
         """
-        Get the progress table associated with this metrics record.
+        Get the progress table for tracking metrics.
 
         :return: The progress table.
         """
 
         return self._table
+
+    @property
+    def pbar(self) -> TableProgressBar:
+        """
+        Get the progress bar associated with the table.
+
+        :return: The progress bar.
+        """
+
+        return self._pbar
 
     def get_row(self, date_str: str) -> int:
         """
@@ -312,12 +334,24 @@ class ScanMetrics:
 
         return self._table_index[date_str]
 
-    def invalid_photo_file(self, photo: Path):
+    def invalid_photo_file(self, *,
+                           row_num: int | None = None,
+                           date_str: str | None = None,
+                           photo: Path | None = None):
         """
         Indicate that the given photo file is in fact not a valid photo. This
         decreases the total photo count and increases the "Other File" count.
 
-        :param photo: The path to the invalid photo.
+        The photo can be identified by one of three parameters: the row number
+        in the progress table, the name of the parent date directory, or the
+        path to the photo file itself. Only one is necessary, and they are
+        checked in that order. Conflicts are not detected.
+
+        :param row_num: The row number in the progress table for the date
+         containing the invalid photo. Defaults to None.
+        :param date_str: The name of the date directory containing the invalid
+         photo. Defaults to None.
+        :param photo: The path to the invalid photo. Defaults to None.
         :return: None
         """
 
@@ -325,10 +359,14 @@ class ScanMetrics:
         with self._invalid_counter_lock:
             self._invalid_files += 1
 
+        # Get row number in progress table
+        if row_num is None:
+            row_num = self._table_index[photo.parent.parent.name
+                                        if date_str is None else date_str]
+        
         # Update progress table
-        row = self._table_index[photo.parent.parent.name]
-        self._table.update('Photos', -1, row=row)
-        self._table.update('Other Files', 1, row=row)
+        self._table.update('Photos', -1, row=row_num)
+        self._table.update('Other Files', 1, row=row_num)
 
         # Decrement the progress bar unless it's managed externally
         if not self._externally_managed_pbar:
@@ -394,7 +432,7 @@ class ScanMetrics:
                 f"Must provide a group count for a new date when "
                 f"not using a fixed-size sample, but got {groups}"
             )
-    
+
         # Go to next row if enabled, and this isn't the first date
         if next_row and self._dates_remaining < self._total_dates:
             self._table.next_row()
@@ -422,7 +460,7 @@ class ScanMetrics:
                     self._total_dates - self._dates_remaining) *
                 self._total_dates
             )
-
+    
         # Return row number in progress table
         return row
 
@@ -593,8 +631,13 @@ class ScanMetrics:
         if not self._fixed_sample:
             self._set_estimated_photo_count(self._total_files)
 
-        # Close table if pbar is managed internally
-        if not self._externally_managed_pbar:
+        if self._externally_managed_pbar:
+            # If the progress bar is managed externally, start showing
+            # progress (if not already), as we now know the final total now
+            self._pbar.show_progress = True
+        else:
+            # If managed internally, everything is done. Close the progress
+            # table now
             self._table.close()
 
     def _set_estimated_photo_count(self, total: int) -> None:

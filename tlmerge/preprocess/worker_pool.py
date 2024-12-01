@@ -5,7 +5,7 @@ from enum import Enum
 import logging
 from queue import Queue, Empty
 from threading import current_thread, Lock, Thread
-from typing import Self
+from typing import Any, Self
 
 _log = logging.getLogger(__name__)
 
@@ -80,6 +80,8 @@ class WorkerPool:
                  results: Queue = None,
                  name_prefix: str = 'wkr-',
                  on_close_hook: Callable | None = None,
+                 error_handler: Callable[[Exception], bool] | None = None,
+                 task_queue_size: int = 0,
                  daemon: bool = True) -> None:
         """
         Create a multithreaded worker pool. This is similar to a
@@ -102,6 +104,17 @@ class WorkerPool:
          Defaults to "wkr-".
         :param on_close_hook: A function that is called by each worker thread
          as it closes. Defaults to None.
+        :param error_handler: A function that is called whenever a worker
+         counters an error. It must accept the Exception and the identifier
+         string associated with the task. It can attempt to handle the error,
+         returning anything Truthy if the error is handled (and thus shouldn't
+         count toward the max error threshold). The handler is not used for
+         fatal exceptions (i.e. MemoryError and other strictly BaseExceptions).
+         If this is None, errors are simply logged. Defaults to None.
+        :param task_queue_size: The maximum size of the task queue. If set,
+         `add()` calls will block when the queue is full until a worker starts
+         one of the tasks. If less than or equal to 0, the queue is unbounded.
+         Defaults to 0.
         :param daemon: Whether each new worker should be created in daemon mode.
          Defaults to True.
         :raise ValueError: If the number of workers is zero or negative.
@@ -126,12 +139,17 @@ class WorkerPool:
         # not the same as the number of current threads, len(self._workers)
         self._new_worker_counter: int = 0
 
+        self._error_handler: Callable[[Exception, str], bool] | None = \
+            error_handler
+
         # Misc worker config
         self.name_prefix = name_prefix
         self.daemon = daemon
 
         # Queue with incoming tasks
-        self._tasks: Queue[tuple[Callable[[...], any], str, tuple]] = Queue()
+        self._tasks: Queue[tuple[Callable[..., Any], str, tuple]] = Queue(
+            maxsize=task_queue_size
+        )
 
         # Results are added to this queue if it's given
         self._results: Queue | None = results
@@ -145,7 +163,7 @@ class WorkerPool:
         self._lock = Lock()
 
     def add(self,
-            task: Callable[[...], any],
+            task: Callable[..., Any],
             identifier_text: str | None = None,
             *args) -> None:
         """
@@ -251,7 +269,7 @@ class WorkerPool:
                         self._state = WorkerPoolState.FINISHED
 
     def _run_task(self,
-                  task: Callable[[...], any],
+                  task: Callable[..., Any],
                   identifier: str | None,
                   args: tuple) -> None:
         """
@@ -277,25 +295,33 @@ class WorkerPool:
             # Catch all errors to them out below
             err = e
 
-        # Log the error
+        # Get the task's identifier string
         if identifier is None or not identifier.strip():
             identifier = 'Task'
-        _log.error(f'{identifier} failed with {err.__class__.__name__}: {err}')
 
         with self._lock:
             fatal = isinstance(err, MemoryError) or \
-                    not isinstance(err, Exception)
+                not isinstance(err, Exception)
 
-            if fatal:
-                # Fatal exception. Set self._exception unless already set with
-                # a fatal exception from an earlier thread
-                if self._exception is None:
-                    self._exception = err
-            else:
-                self._errors.append(err)  # noqa
-                # If not yet reached the error threshold, exit
-                if len(self._errors) <= self._error_threshold:
-                    return
+            if fatal or self._error_handler is None:
+                _log.error(
+                    f"{identifier} failed with{' fatal' if fatal else ''} "
+                    f"{err.__class__.__name__}: {err}"
+                )
+
+                if fatal:
+                    # Fatal exception. Set self._exception unless already set with
+                    # a fatal exception from an earlier thread
+                    if self._exception is None:
+                        self._exception = err
+                else:
+                    self._errors.append(err)  # noqa
+                    # If not yet reached the error threshold, exit
+                    if len(self._errors) <= self._error_threshold:
+                        return
+            elif self._error_handler(err, identifier):
+                # If it's caught by the error handler, do nothing
+                return
 
             # If already cancelling, exit this worker. Otherwise, set to
             # cancel, and wait for the other worker threads to finish
@@ -372,7 +398,8 @@ class WorkerPool:
         with self._lock:
             if self._state == WorkerPoolState.NOT_STARTED:
                 # Can't close until started
-                raise RuntimeError("Can't close worker pool before starting it")
+                raise RuntimeError("Can't close worker pool before "
+                                   "starting it")
             elif self._state == WorkerPoolState.RUNNING:
                 # Only switch to CLOSED if currently RUNNING
                 self._state = WorkerPoolState.CLOSED

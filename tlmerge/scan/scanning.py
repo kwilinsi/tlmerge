@@ -93,7 +93,8 @@ def enqueue_thread(output: Queue[Path | None] | Queue[Path],
                    daemon: bool = True,
                    start: bool = True,
                    cancel_event: Event | None = None,
-                   none_terminated: bool = True) -> Thread:
+                   none_terminated: bool = True,
+                   log_summary: bool = True) -> Thread:
     """
     Scan for all photos on a separate thread, adding them to the given queue.
 
@@ -107,12 +108,17 @@ def enqueue_thread(output: Queue[Path | None] | Queue[Path],
      given, the thread cannot be cancelled gracefully. Defaults to None.
     :param none_terminated: Whether to add None to the queue at the end to
      signal that the scanner is done. Defaults to True.
+    :param log_summary: Whether to log scanning summary statistics after
+     exhausting the scanner. Defaults to True.
     :return: The Thread doing the scanning. Join it to wait for the
      scan operating to finish.
     """
 
     def scan():
-        for photo in iter_all_photos(metrics, log_finished=False):
+        for photo in iter_all_photos(
+            metrics,
+            log_finished=False if log_summary else None
+        ):
             # If cancel signal sent, exit this thread
             if cancel_event is not None and cancel_event.is_set():
                 return
@@ -148,9 +154,8 @@ def run_scanner() -> None:
     _log.info(f'Scanning timelapse project "{cfg.project}" '
               '(this may take some time)')
 
-    metrics, table, _ = ScanMetrics.with_default_progress_table(
-        'Scanning...', s_size
-    )
+    table, pbar = ScanMetrics.def_progress_table(s_size)
+    metrics = ScanMetrics(table, pbar)
 
     # If sampling, log a message with the target sample size
     if sample:
