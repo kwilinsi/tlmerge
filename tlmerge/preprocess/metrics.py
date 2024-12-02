@@ -34,12 +34,13 @@ class PreprocessingMetrics(ScanMetrics):
         super().__init__(table, pbar, externally_managed_pbar=True, **kwargs)
 
         # Counters
+        self._preprocessed: int = 0
         self._new_photos: int = 0
         self._updated_photos: int = 0
         self._errors: int = 0
 
     @classmethod
-    def def_progress_table(cls, sample_size: int = -1) -> \
+    def def_progress_table(cls, *, sample_size: int = -1) -> \
             tuple[ProgressTable, TableProgressBar]:
         """
         Create a new ProgressTable and associated progress bar designed to
@@ -86,6 +87,9 @@ class PreprocessingMetrics(ScanMetrics):
         """
 
         row = self.get_row(date_str)
+
+        # Update total counter
+        self._preprocessed += 1
 
         # Update counter
         if is_new:
@@ -146,3 +150,24 @@ class PreprocessingMetrics(ScanMetrics):
                       f"{u} updated record{'' if u == 1 else 's'} with "
                       f"{e} error{'' if e == 1 else 's'}; scanned a total of "
                       f"{p} photo{'' if p == 1 else 's'}")
+
+    def debug_info(self) -> str:
+        """
+        Get a string with information about the scan and preprocessing metrics
+        for debugging purposes. This includes the values of important counters.
+
+        This is intended for use during a fatal error to log some information
+        to the console. It avoids acquiring any locks (even where they would
+        normally be used) to ensure it does not deadlock.
+
+        :return: A string with debug info.
+        """
+
+        e = self._errors
+
+        return (
+            f"scanned {super().debug_info()}: {self._preprocessed} "
+            f"preprocessed with {self._new_photos} new, "
+            f"{self._updated_photos} to update, "
+            f"and {e} error{'' if e == 1 else 's'}"
+        )

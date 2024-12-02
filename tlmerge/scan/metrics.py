@@ -146,7 +146,7 @@ class ScanMetrics:
         self._fixed_sample: bool = False
 
     @classmethod
-    def def_progress_table(cls,
+    def def_progress_table(cls, *,
                            pbar_label: str = 'Scanning...',
                            sample_size: int = -1) -> \
             tuple[ProgressTable, TableProgressBar]:
@@ -363,7 +363,7 @@ class ScanMetrics:
         if row_num is None:
             row_num = self._table_index[photo.parent.parent.name
                                         if date_str is None else date_str]
-        
+
         # Update progress table
         self._table.update('Photos', -1, row=row_num)
         self._table.update('Other Files', 1, row=row_num)
@@ -460,7 +460,7 @@ class ScanMetrics:
                     self._total_dates - self._dates_remaining) *
                 self._total_dates
             )
-    
+
         # Return row number in progress table
         return row
 
@@ -792,3 +792,45 @@ class ScanMetrics:
 
         # Log the regular info message
         _log.info(f"{text} of {photos_str} {group_date_str}")
+
+    def debug_info(self) -> str:
+        """
+        Get a string with information about the scan metrics for debugging
+        purposes. This includes the values of important counters.
+
+        This is intended for use during a fatal error to log some information
+        to the console. It avoids acquiring any locks (even where they would
+        normally be used) to ensure it does not deadlock.
+
+        :return: A string with debug info.
+        """
+
+        # Shorten strings, and lock in values (in case they change ig)
+        e = self._estimate
+        f = self._total_files
+        p = f - self._invalid_files
+        g = self._total_groups
+        sg = g - self._groups_remaining
+        d = self._total_dates
+        sd = d - self._dates_remaining
+
+        # If the number of photos and files scanned so far are the same, just
+        # list that as the "photo" count. On the other hand, if they're
+        # different, it means that some of the scanned files were not photos
+        # recognized by rawpy. In that case, separately list the counts of
+        # files and photos.
+        if f == p:
+            photo_str = f"photo{'' if e == 1 else 's'}"
+        else:
+            photo_str = (f"file{'' if e == 1 else 's'} "
+                         f"({p} photo{'' if p == 1 else 's'})")
+
+        # Assemble the debug string. The final format looks like:
+        # "78/~268 files (75 photos) from 7/8 groups in 4/7 dates"
+        # Or a shorter form for a fixed-size sample and no invalid photos:
+        # "12/100 files from 1/1 group in 1/3 dates"
+        return (
+            f"{f}/{'~' if e - f != 0 and not self._fixed_sample else ''}{e} "
+            f"{photo_str} from {sg}/{g} group{'' if g == 1 else 's'} "
+            f"in {sd}/{d} date{'' if d == 1 else 's'}"
+        )

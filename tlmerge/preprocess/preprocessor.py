@@ -220,12 +220,14 @@ class Preprocessor:
 
         # Initialize the metrics, progress table, and progress bar
         table, pbar = PreprocessingMetrics.def_progress_table(
-            self.cfg.sample_size
+            sample_size=self.cfg.sample_size
         )
         self._metrics = PreprocessingMetrics(table, pbar)
 
         # Buffer log messages to not interfere with the progress table
-        with buffer_console_log():
+        buffer = buffer_console_log()
+        try:
+            buffer.start()
 
             # Start the scanner
             enqueue_thread(
@@ -251,9 +253,16 @@ class Preprocessor:
             # SECOND LOOP: process all remaining metadata records
             while self._apply_metadata(session):
                 pass
-
-            # Close the progress table; then release the log buffer
+        except KeyboardInterrupt:
+            _log.info('Preprocessing debug info: ' +
+                      self._metrics.debug_info())
+            raise
+        finally:
+            # Close the progress table
             table.close()
+
+            # Release the log buffer
+            buffer.release()
 
         # Commit db changes
         session.commit()
@@ -453,7 +462,7 @@ class Preprocessor:
         if isinstance(error, LibRawFileUnsupportedError) or \
                 isinstance(error, LibRawIOError):
             self._metrics.invalid_photo_file(
-                date_str=Path(rel_path).parent.parent.name
+                date_str=Path(rel_path).parts[0]
             )
 
             # Delete the metadata record for this photo to avoid a memory leak

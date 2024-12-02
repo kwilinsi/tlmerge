@@ -154,7 +154,7 @@ def run_scanner() -> None:
     _log.info(f'Scanning timelapse project "{cfg.project}" '
               '(this may take some time)')
 
-    table, pbar = ScanMetrics.def_progress_table(s_size)
+    table, pbar = ScanMetrics.def_progress_table(sample_size=s_size)
     metrics = ScanMetrics(table, pbar)
 
     # If sampling, log a message with the target sample size
@@ -172,8 +172,8 @@ def run_scanner() -> None:
 
     with buffer_console_log():
         try:
-            # If sampling 30 or fewer photos, log each of them
-            if 1 <= s_size <= 30:
+            # If sampling 10 or fewer photos, log each of them
+            if 1 <= s_size <= 10:
                 for photo in generator:
                     _log.info(f'Found photo "{photo}"')
             else:
