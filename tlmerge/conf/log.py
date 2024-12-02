@@ -173,16 +173,16 @@ class LogBuffer(Filter):
         self._buffer: deque[LogRecord] = deque(maxlen=max_size)
 
         # Keep track of the lowest level record in the buffer. Initialize to
-        # an arbitrarily high value certainly out of the typical log level 
+        # an arbitrarily high value certainly out of the typical log level
         # number range
         self._min_level: int = 1000
 
-    def filter(self, record: LogRecord) -> None:
+    def filter(self, record: LogRecord) -> Literal['False']:
         """
         Filter an incoming record to the attached handler.
 
         :param record: The incoming log record.
-        :return: None
+        :return: False to block all log records from printing to the console.
         """
 
         # Easy buffering: max size not yet reached
@@ -210,11 +210,11 @@ class LogBuffer(Filter):
         # in the last call we removed the last remaining record at that level.
         # This requires another iteration over the deque to set the min level,
         # but it's rare
-        self._min_level = self._max_level
+        self._min_level = 1000  # arbitrarily large; much higher than CRITICAL
         for r in self._buffer:
             if r.levelno < self._min_level:
                 self._min_level = r.levelno
-        
+
         # If the incoming record is less than the new min_level, ignore it
         if record.levelno < self._min_level:
             return False
@@ -229,7 +229,7 @@ class LogBuffer(Filter):
         # Unreachable
         raise RuntimeError('Unreachable: no log record in buffer at newly '
                            f'calculated min level {self._min_level}')
-    
+
     def start(self) -> Self:
         """
         Start buffering log messages to the handler specified at
@@ -241,12 +241,12 @@ class LogBuffer(Filter):
 
         self._handler.addFilter(self)
         return self
-    
+
     def release(self) -> None:
         """
         Stop buffering log messages, and release all buffered messages to the
         handler.
-        
+
         :return: None
         """
 
@@ -269,7 +269,7 @@ def buffer_console_log(**kwargs) -> LogBuffer:
 
     Start the buffer with LogBuffer.start() or by opening it in a context
     manager.
-    
+
     :param **kwargs: Additional arguments to pass to LogBuffer().
     :return: A buffer that will run on the console handler.
     :raise RuntimeError: If no console handler can be found.
@@ -277,7 +277,7 @@ def buffer_console_log(**kwargs) -> LogBuffer:
 
     for handler in logging.getLogger().handlers:
         if isinstance(handler, StreamHandler) and \
-            handler.stream in {sys.stdout, sys.stderr}:
+                handler.stream in {sys.stdout, sys.stderr}:
             return LogBuffer(handler, **kwargs)
-    
+
     raise RuntimeError('Cannot find a console log handler to buffer')
