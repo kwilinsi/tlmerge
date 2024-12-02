@@ -37,12 +37,13 @@ def iter_all_groups(date_dir: Path) -> Generator[Path, None, None]:
     yield from impl.iter_groups(date_dir, scan_all=True)
 
 
-def iter_all_photos(metrics: ScanMetrics,
-                    order: bool = False,
-                    validate: bool = False,
-                    log_finished: bool | None = None) -> Generator[Path, None, None]:
+def iter_photos(metrics: ScanMetrics,
+                order: bool = False,
+                validate: bool = False,
+                log_finished: bool | None = None) -> Generator[Path, None, None]:
     """
-    Iterate over all photos in the project.
+    Iterate over the photos in the project. If a sample is enabled in
+    configuration, this only iterates up to the sample size.
 
     :param metrics: Scanning metrics for tracking progress and summary stats.
     :param order: Whether to yield the photos strictly in order. If conducting
@@ -62,7 +63,7 @@ def iter_all_photos(metrics: ScanMetrics,
     sample, s_random, s_size = cfg.sample_details()
 
     if s_random:
-        yield from impl.iter_all_photos_random(
+        yield from impl.iter_photos_random(
             metrics=metrics,
             project_root=cfg.project,
             date_format=cfg.date_format,
@@ -71,7 +72,7 @@ def iter_all_photos(metrics: ScanMetrics,
             validate=validate
         )
     else:
-        yield from impl.iter_all_photos(
+        yield from impl.iter_photos(
             metrics=metrics,
             project_root=cfg.project,
             date_format=cfg.date_format,
@@ -115,7 +116,7 @@ def enqueue_thread(output: Queue[Path | None] | Queue[Path],
     """
 
     def scan():
-        for photo in iter_all_photos(
+        for photo in iter_photos(
             metrics,
             log_finished=False if log_summary else None
         ):
@@ -163,7 +164,7 @@ def run_scanner() -> None:
                   f"photo{'' if s_size == 1 else 's'}…")
 
     # Create a generator to iterate over the photos
-    generator = iter_all_photos(
+    generator = iter_photos(
         metrics,
         order=True,
         validate=True,

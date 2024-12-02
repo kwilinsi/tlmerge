@@ -5,8 +5,8 @@ from pathlib import Path
 from random import shuffle
 from typing import Optional
 
-from rawpy import (imread, LibRawFileUnsupportedError,
-                   LibRawIOError, LibRawError)
+import rawpy
+from rawpy import LibRawFileUnsupportedError, LibRawIOError, LibRawError
 
 from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
 from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
@@ -102,14 +102,14 @@ def is_rawpy_compatible(path: str) -> bool:
     """
 
     try:
-        with imread(path):
+        with rawpy.imread(path):
             return True
     except (LibRawFileUnsupportedError, LibRawIOError):
         return False
     except LibRawError as e:
         _log.error(f'Got unexpected error while testing "{path}" '
                    f'for RawPy compatibility: {e}')
-        return False # Clearly not compatible
+        return False  # Clearly not compatible
 
 
 def yield_gen(generator: Iterable[tuple[Path, any]],
@@ -247,7 +247,7 @@ def iter_groups(date_dir: Path, *,
     )
 
 
-def iter_photos(
+def iter_photos_in_group(
         group_dir: Path, *,
         order: bool = False,
         randomize: bool = False) -> \
@@ -281,13 +281,13 @@ def iter_photos(
 
 
 # noinspection PyProtectedMember
-def iter_all_photos(*, metrics: ScanMetrics,
-                    project_root: Path,
-                    date_format: str,
-                    excluded_dates: list[str],
-                    order: bool,
-                    validate: bool = False,
-                    sample: int = -1) -> Generator[Path, None, None]:
+def iter_photos(*, metrics: ScanMetrics,
+                project_root: Path,
+                date_format: str,
+                excluded_dates: list[str],
+                order: bool,
+                validate: bool = False,
+                sample: int = -1) -> Generator[Path, None, None]:
     """
     Get a generator that iterates over every photo in the timelapse project.
     Ordering is optional. Use `iter_all_photos_random` to yield in a random
@@ -334,7 +334,7 @@ def iter_all_photos(*, metrics: ScanMetrics,
             metrics._start_group(group_dir.name)
 
             # Iterate over each photo
-            for photo in iter_photos(group_dir, order=order):
+            for photo in iter_photos_in_group(group_dir, order=order):
                 invalid = validate and not is_rawpy_compatible(str(photo))
 
                 if not invalid:
@@ -382,7 +382,7 @@ class DateIterator:
         # Load the next group
         group = next(self.group_gen)
         metrics._start_group(group.name)
-        self.photo_gen: Generator[Path, None, None] = iter_photos(
+        self.photo_gen: Generator[Path, None, None] = iter_photos_in_group(
             group, randomize=True
         )
 
@@ -417,12 +417,12 @@ class DateIterator:
 
 
 # noinspection PyProtectedMember
-def iter_all_photos_random(metrics: ScanMetrics,
-                           project_root: Path,
-                           date_format: str,
-                           excluded_dates: list[str],
-                           sample_size: int,
-                           validate: bool = False) -> Generator[Path, None, None]:
+def iter_photos_random(metrics: ScanMetrics,
+                       project_root: Path,
+                       date_format: str,
+                       excluded_dates: list[str],
+                       sample_size: int,
+                       validate: bool = False) -> Generator[Path, None, None]:
     """
     Iterate over all photos in the timelapse project directory in a random
     order, up to the stated sample size.
@@ -475,7 +475,7 @@ def iter_all_photos_random(metrics: ScanMetrics,
         # this step. This will run at least once the first time the main
         # loop runs, as open_dates is initially empty
         if date_gen is not None and \
-            len(open_dates) - g < metrics.remaining_photos:
+                len(open_dates) - g < metrics.remaining_photos:
             try:
                 date_dir = next(date_gen)
             except StopIteration:
