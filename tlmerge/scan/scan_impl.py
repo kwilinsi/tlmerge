@@ -409,7 +409,9 @@ class DateIterator:
                 # No more photos in this generator: on to next group
                 try:
                     group = next(self.group_gen)
-                    self.photo_gen = iter_photos(group, randomize=True)
+                    self.photo_gen = iter_photos_in_group(
+                        group, randomize=True
+                    )
                     metrics._start_group(group.name)
                 except StopIteration:
                     # No more groups; this date is done
@@ -480,7 +482,7 @@ def iter_photos_random(metrics: ScanMetrics,
                 date_dir = next(date_gen)
             except StopIteration:
                 date_gen = None  # Indicate that there are no more dates
-                break
+                continue
 
             try:
                 open_dates.append(DateIterator(date_dir, metrics))
