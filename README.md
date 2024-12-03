@@ -72,3 +72,5 @@ Configuration is supported at all levels for maximum flexibility. You can place 
 For example, the file `./2024-01-01/config.tlmerge` applies to all the groups and photos taken on 2024-01-01. Another file at `./2024-01-01/a/config.tlmerge` overrides that configuration specifically for photos in the group `a`.
 
 It's also possible to override all configuration files through command line arguments.
+
+You can find more information about tlmerge configuration [here](docs/config.md).
