@@ -236,7 +236,6 @@ class ExifWorker:
 
         self.exif_raw: ExifToolHelper = ExifToolHelper()  # Default: -G and -n
         self.exif_fmt: ExifToolHelper = ExifToolHelper(common_args=['-G'])
-        self._is_open: bool = False
 
     def close(self) -> None:
         """
@@ -246,10 +245,8 @@ class ExifWorker:
         :return: None
         """
 
-        if self._is_open:
-            self.exif_raw.terminate()
-            self.exif_fmt.terminate()
-            self._is_open = False
+        self.exif_raw.terminate()
+        self.exif_fmt.terminate()
 
     def extract(self, file: Path | str) -> ExifData:
         """
@@ -269,11 +266,9 @@ class ExifWorker:
          loading the EXIF data.
         """
 
-        # If ExifTool is not yet open, then open a connection
-        if not self._is_open:
-            self.exif_raw.run()
-            self.exif_fmt.run()
-            self._is_open = True
+        # Start ExifTool in case not yet running
+        self.exif_raw.run()
+        self.exif_fmt.run()
 
         return ExifData(
             exif_raw=self.exif_raw.get_metadata(str(file))[0],
