@@ -38,7 +38,13 @@ class Preprocessor:
     # leads to some queues filling up quickly
     QUEUE_MAX_SIZE: int = 300
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initialize the preprocessor.
+
+        :return: None
+        """
+
         # Determine the number of workers to use
         self.cfg = CONFIG.root
 

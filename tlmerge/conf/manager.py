@@ -18,7 +18,15 @@ _yaml.sequence_dash_offset = 2
 
 
 class ConfigManager:
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initialize the config manager, which is responsible for sorting out
+        which configurations apply at each level of the timelapse project
+        (global, date-specific, and group-specific).
+
+        :return: None
+        """
+
         # Root config node
         self._modifiable_root = GlobalConfig()
         self._root_view = GlobalConfigView(self._modifiable_root)

@@ -9,7 +9,7 @@ from .run import run
 _silent: bool = False
 
 
-def main():
+def main() -> None:
     # Parse command line arguments
     args: Namespace = parse_cli()
 

@@ -79,7 +79,7 @@ _LENS_ATTRIBUTES = (
 
 @dataclass(init=False)
 class PhotoMetadata:
-    def __init__(self, date: str, group: str, file_name: str):
+    def __init__(self, date: str, group: str, file_name: str) -> None:
         """
         Initialize a PhotoMetadata object by specifying the photo to which it
         refers.
@@ -87,6 +87,7 @@ class PhotoMetadata:
         :param date: The name of the date directory.
         :param group: The name of the group subdirectory within the date.
         :param file_name: The name of the photo file within the group.
+        :return: None
         """
 
         self.date = date

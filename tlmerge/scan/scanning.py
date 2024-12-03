@@ -40,7 +40,8 @@ def iter_all_groups(date_dir: Path) -> Generator[Path, None, None]:
 def iter_photos(metrics: ScanMetrics,
                 order: bool = False,
                 validate: bool = False,
-                log_finished: bool | None = None) -> Generator[Path, None, None]:
+                log_finished: bool | None = None) -> Generator[
+    Path, None, None]:
     """
     Iterate over the photos in the project. If a sample is enabled in
     configuration, this only iterates up to the sample size.
@@ -77,7 +78,8 @@ def iter_photos(metrics: ScanMetrics,
             project_root=cfg.project,
             date_format=cfg.date_format,
             excluded_dates=cfg.exclude_dates,
-            order=order or sample,  # Yield in order if it's a deterministic sample
+            order=order or sample,
+            # Yield in order if it's a deterministic sample
             validate=validate,
             sample=s_size
         )
@@ -115,10 +117,10 @@ def enqueue_thread(output: Queue[Path | None] | Queue[Path],
      scan operating to finish.
     """
 
-    def scan():
+    def scan() -> None:
         for photo in iter_photos(
-            metrics,
-            log_finished=False if log_summary else None
+                metrics,
+                log_finished=False if log_summary else None
         ):
             # If cancel signal sent, exit this thread
             if cancel_event is not None and cancel_event.is_set():

@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 from pathlib import Path
 from random import shuffle
-from typing import Optional
+from typing import Any, Optional
 
 import rawpy
 from rawpy import LibRawFileUnsupportedError, LibRawIOError, LibRawError
@@ -30,8 +30,8 @@ def iterate(root: Path,
             excluded: list[str],
             max_length: int,
             yield_dirs: bool = True,
-            map_func: Callable[[str], any] | None = None) -> \
-        Generator[tuple[Path, any], None, None]:
+            map_func: Callable[[str], Any] | None = None) -> \
+        Generator[tuple[Path, Any], None, None]:
     """
     Iterate over all items in a given directory, yielding the files or
     directories as required.
@@ -95,7 +95,7 @@ def is_rawpy_compatible(path: str) -> bool:
     Check whether a file is supported by RawPy/LibRaw by attempting to open it.
     Note that this is somewhat performance-heavy.
 
-    Note that any exceptions besides LibRawFileUnsupportedError are propogated.
+    Note that any exceptions besides LibRawFileUnsupportedError are propagated.
 
     :param path: The path to the file as a string.
     :return: True if and only if it is successfully opened with rawpy.imread().
@@ -112,8 +112,8 @@ def is_rawpy_compatible(path: str) -> bool:
         return False  # Clearly not compatible
 
 
-def yield_gen(generator: Iterable[tuple[Path, any]],
-              sort_key: Callable[[tuple[Path, any]], any] | bool | None,
+def yield_gen(generator: Iterable[tuple[Path, Any]],
+              sort_key: Callable[[tuple[Path, Any]], Any] | bool | None,
               randomize: bool,
               yield_count: bool = False) -> Generator[int | Path, None, None]:
     """

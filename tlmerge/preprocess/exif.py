@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from exiftool import ExifToolHelper
 
@@ -43,8 +44,8 @@ def parse_date_time(dt_string: str,
 
 class ExifData:
     def __init__(self,
-                 exif_raw: dict[str, any],
-                 exif_fmt: dict[str, any]) -> None:
+                 exif_raw: dict[str, Any],
+                 exif_fmt: dict[str, Any]) -> None:
         """
         Initialize an EXIF data record with metadata from a photo.
 
@@ -52,14 +53,14 @@ class ExifData:
         :param exif_fmt: The EXIF data automatically formatted by ExifTool.
         """
 
-        self.exif_raw: dict[str, any] = exif_raw
-        self.exif_fmt: dict[str, any] = exif_fmt
+        self.exif_raw: dict[str, Any] = exif_raw
+        self.exif_fmt: dict[str, Any] = exif_fmt
 
     def get(self,
             *tags: str,
             fmt: bool = True,
-            cast: Callable[[any], any] | None = None,
-            opt: bool = True) -> any:
+            cast: Callable[[Any], Any] | None = None,
+            opt: bool = True) -> Any:
         """
         Get the EXIF data associated with the given tag.
 

@@ -72,7 +72,7 @@ def configure_log(file: Path | None,
     logging.getLogger(__name__).debug('Initialized logger: ' + msg)
 
 
-def _add_console_logger(root: Logger, level: int):
+def _add_console_logger(root: Logger, level: int) -> None:
     """
     Install a coloredlogs console handler to the roto logger.
 
@@ -104,7 +104,7 @@ def _add_console_logger(root: Logger, level: int):
     )
 
 
-def _add_file_handler(root: Logger, file: Path):
+def _add_file_handler(root: Logger, file: Path) -> None:
     """
     Add a rotating file handler to the root logger.
 
@@ -177,7 +177,7 @@ class LogBuffer(Filter):
         # number range
         self._min_level: int = 1000
 
-    def filter(self, record: LogRecord) -> Literal['False']:
+    def filter(self, record: LogRecord) -> Literal[False]:
         """
         Filter an incoming record to the attached handler.
 
@@ -257,7 +257,7 @@ class LogBuffer(Filter):
     def __enter__(self) -> Self:
         return self.start()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.release()
 
 

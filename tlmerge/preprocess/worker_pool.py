@@ -53,7 +53,7 @@ class WorkerPoolExceptionGroup(ExceptionGroup):
             errors
         )
 
-    def derive(self, __excs):
+    def derive(self, __excs) -> WorkerPoolExceptionGroup:
         return WorkerPoolExceptionGroup(self.message, __excs)
 
     def summary(self) -> str:
@@ -271,7 +271,7 @@ class WorkerPool:
                 self._workers.append(worker)
                 worker.start()
 
-    def _worker_loop(self):
+    def _worker_loop(self) -> None:
         """
         This function is run in each worker thread. It continuously gets and
         runs the next task, until (a) there aren't any more tasks to run, or
@@ -510,7 +510,24 @@ class WorkerPool:
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Exit the context manager. This closes the worker pool (so it no longer
+        accepts tasks) and then waits for all workers to finish.
+
+        :param exc_type: The type of exception raised within the context
+         manager, if any.
+        :param exc_val: The exception raised within the context manager, if any.
+        :param exc_tb: The traceback of an exception raised within the context
+         manager, if any.
+        :return: None
+        :raises WorkerPoolExceptionGroup: If the pool was cancelled due to
+         tasks exceeding the max error threshold.
+        :raises BaseException: If the pool was cancelled due to one or more
+         workers encountering a fatal error (i.e. a MemoryError or any
+         BaseException that is not an Exception).
+        """
+
         self.close()
 
         try:

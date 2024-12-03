@@ -464,7 +464,7 @@ class ScanMetrics:
         # Return row number in progress table
         return row
 
-    def _start_group(self, group_str: str):
+    def _start_group(self, group_str: str) -> None:
         """
         This is called by the scanner every time it starts scanning a new group.
 

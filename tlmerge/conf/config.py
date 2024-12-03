@@ -564,10 +564,17 @@ class GlobalConfigView(ConfigView):
     settings will raise an AttributeError.
     """
 
-    def __init__(self, config: GlobalConfig):
+    def __init__(self, config: GlobalConfig) -> None:
+        """
+        Initialize a read only view on top of the given GlobalConfig record.
+
+        :param config: The global config record backing this view.
+        :return: None
+        """
+
         super().__init__(config)
 
-    def __getattr__(self, item):
+    def __getattr__(self, item) -> None:
         return getattr(self._config, item)
 
     @property
