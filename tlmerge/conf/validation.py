@@ -1,4 +1,4 @@
-from datetime import date
+import datetime
 from pathlib import Path
 from typing import Optional, Literal, Self
 from typing_extensions import Annotated
@@ -33,7 +33,7 @@ def validate_log_level(verbose: bool | None,
         raise ValueError(f"Can't use log flags {flags} at the same time.")
 
 
-def validate_date(date_str: str | date) -> None:
+def validate_date(date_str: str | datetime.date) -> None:
     """
     Validate a date string. This converts it to a pathlib Path to confirm that
     it is a plausible directory name.
@@ -44,7 +44,7 @@ def validate_date(date_str: str | date) -> None:
     :return: None
     """
 
-    if isinstance(date_str, date):
+    if isinstance(date_str, datetime.date):
         return
 
     if not date_str or not date_str.strip():
@@ -126,7 +126,7 @@ class BaseConfigModel(Base):
 
 
 class GroupOverrideModel(BaseConfigModel):
-    date: str | date | None = None
+    date: str | datetime.date | None = None
     group: str
 
     @model_validator(mode='after')
@@ -134,7 +134,7 @@ class GroupOverrideModel(BaseConfigModel):
         d = self.date
         if d is not None:
             validate_date(d)
-            if isinstance(d, date):
+            if isinstance(d, datetime.date):
                 # Exact date format is unknown here, but this'll work for
                 # validating the group
                 d = Path(d.strftime('%Y%m%d'))
@@ -155,7 +155,7 @@ class DateConfigModel(BaseConfigModel):
 
 
 class DateOverrideModel(DateConfigModel):
-    date: str | date
+    date: str | datetime.date
 
     @model_validator(mode='after')
     def check_date(self) -> Self:
@@ -179,14 +179,14 @@ class GlobalConfigModel(BaseConfigModel):
     database: str | None = None
 
     # Date/group inclusion and exclusion
-    include_dates: Optional[list[str | date]] = None
-    exclude_dates: Optional[list[str | date]] = None
+    include_dates: Optional[list[str | datetime.date]] = None
+    exclude_dates: Optional[list[str | datetime.date]] = None
     include_groups: Optional[list[str]] = None
     exclude_groups: Optional[list[str]] = None
 
     # Group and date settings
     group_ordering: Optional[Literal['abc', 'natural']] = None
-    group_date_format: str | None = None
+    date_format: str | None = None
 
     # Overrides
     overrides: Optional[list[DateOverrideModel | GroupOverrideModel]] = None

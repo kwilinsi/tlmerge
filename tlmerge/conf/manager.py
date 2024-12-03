@@ -611,7 +611,7 @@ def write_default_config(file: Path) -> None:
         'include_groups': [],
         'exclude_groups': [],
         'group_ordering': 'abc',
-        'group_date_format': 'yyyy-mm-dd',
+        'date_format': 'yyyy-mm-dd',
         'white_balance': {
             'red': 1.0,
             'green_1': 1.0,
