@@ -13,7 +13,8 @@ tlmerge is designed with large timelapses in mind, especially those spanning mul
 Currently, you can install tlmerge by cloning the GitHub respository:
 
 ```
-clone command
+git clone https://github.com/kwilinsi/tlmerge
+cd tlmerge
 ```
 
 It's recommended that you [create a virtual environment](https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/#create-and-use-virtual-environments). Activate it, and then install the dependencies:
