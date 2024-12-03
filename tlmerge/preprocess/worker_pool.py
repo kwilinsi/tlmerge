@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import Enum
 import logging
-from queue import Queue, Empty
+from queue import Empty, Full, Queue
 from threading import current_thread, Lock, Thread
 from typing import Any, Self
 
@@ -238,10 +238,29 @@ class WorkerPool:
                     raise RuntimeError("Can't add a task to the worker pool "
                                        "after it's finished")
 
-            # Add the task to the queue
-            self._tasks.put_nowait((task, identifier_text, args))
+        # Add the task to the queue
+        while True:
+            try:
+                self._tasks.put((task, identifier_text, args), timeout=1)
+                break
+            except Full:
+                # Check whether the worker pool closed while waiting to
+                # add this task to the queue
+                with self._lock:
+                    if self._state == WorkerPoolState.RUNNING:
+                        # Still running; keep trying to add to queue
+                        continue
+                    elif self._state == WorkerPoolState.FINISHED:
+                        if self._exception is not None:
+                            raise self._exception
+                    
+                    raise RuntimeError(
+                        f"Worker pool {self._state.name} while waiting "
+                        "to add task, as task queue is full"
+                    )
 
-            # Create a new worker thread if under the maximum
+        # Create a new worker thread if under the maximum
+        with self._lock:
             if len(self._workers) < self.max_workers:
                 self._new_worker_counter += 1
                 worker = Thread(
