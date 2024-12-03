@@ -253,9 +253,21 @@ class Preprocessor:
             # SECOND LOOP: process all remaining metadata records
             while self._apply_metadata(session):
                 pass
-        except KeyboardInterrupt:
-            _log.info('Preprocessing debug info: ' +
-                      self._metrics.debug_info())
+        except BaseException as e:
+            _log.warning('Preprocessing stopped with '
+                         f'{e.__class__.__name__}. Debug info:')
+
+            # Log preprocessing debug info
+            _log.warning(self._metrics.debug_info())
+
+            # Log worker pool debug info
+            n = self._photo_worker_pool.error_count
+            w = self._photo_worker_pool.worker_count
+            _log.warning(f"Worker pool: {self._photo_worker_pool.state} "
+                         f"with {w} active worker{'' if w == 1 else 's'} "
+                         f"and {n} error{'' if n == 1 else 's'}")
+
+            # Reraise
             raise
         finally:
             # Close the progress table
@@ -349,7 +361,7 @@ class Preprocessor:
 
         # Get the next metadata record from the worker pool
         try:
-            metadata: PhotoMetadata = self._metadata_queue.get_nowait()
+            metadata: PhotoMetadata = self._metadata_queue.get(timeout=0.1)
         except Empty:
             # Return False (the "done" signal) only if the worker pool
             # finished, and the queue is indeed empty. Re-checking empty() here

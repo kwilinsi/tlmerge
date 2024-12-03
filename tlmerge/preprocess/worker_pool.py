@@ -161,6 +161,33 @@ class WorkerPool:
         # errors (self._errors and self._exception), state, (self._state),
         # and worker threads (self._workers and self._new_worker_counter)
         self._lock = Lock()
+    
+    @property
+    def state(self) -> WorkerPoolState:
+        with self._lock:
+            return self._state
+    
+    @property
+    def error_count(self) -> int:
+        """
+        Get the number of errors so far.
+        
+        :return: The number of errors.
+        """
+
+        with self._lock:
+            return len(self._errors)
+        
+    @property
+    def worker_count(self) -> int:
+        """
+        Get the number of active worker threads.
+        
+        :return: The number of workers.
+        """
+
+        with self._lock:
+            return len(self._workers)
 
     def add(self,
             task: Callable[..., Any],
@@ -330,15 +357,24 @@ class WorkerPool:
             else:
                 self._state = WorkerPoolState.CANCELLING
 
-        # Wait for all worker threads to finish by joining all except this one.
-        # No need to lock as _workers is not modified once the state is no
-        # longer RUNNING (and besides, locking blocks the other threads)
-        for worker in self._workers:
-            if worker is not current_thread():
-                worker.join()
+        # Wait for all worker threads to finish by repeatedly joining the
+        # first one until they're all finished
+        cur_thread = current_thread()
+        i = 0
+        while True:
+            with self._lock:
+                if len(self._workers) == 1:
+                    break
+                worker = self._workers[i]
+            
+            # If this thread is worker #1, don't join it (lest we deadlock).
+            # Instead start joining on worker #2.
+            if worker == cur_thread:
+                i = 1
+                continue
 
-        # Shouldn't need the lock, as this is the only thread left, but eh,
-        # just to be safe ig...
+            worker.join()
+
         with self._lock:
             # Set the exception, unless something already set a fatal error
             # (possibly even this worker a few lines up)
