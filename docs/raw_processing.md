@@ -1,3 +1,8 @@
+> **Warning:** This document includes images with an un-interpolated bayer
+> pattern, which can cause rapid flickering when rendered based on the zoom
+> level and interpolation. on-screen. Zooming
+> in or out may help fix this.
+
 # Processing a Raw Image
 
 tlmerge is designed for photographers who are familiar with how raw images work.
@@ -178,13 +183,13 @@ The following `dcraw` command was used to generate the interpolated image on
 the left:
 
 ```
-dcraw -T -r 1 1 1 1 -g 1 1 -W -v seagull.nef
+dcraw -T -r 1 1 1 1 -g 1 1 -W -h -v seagull.nef
 ```
 
-It uses default pixel values with no white balance adjustment (`-r 1 1 1 1`),
-linear values without a gamma curve (`-g 1 1`), and no auto brightness
-adjustment (`-W`). It saves as a `.tiff` file (`-T`) and prints some processing
-information (`-v`).
+It uses default pixel values with raw white balance (`-r 1 1 1 1`), linear
+values without a gamma curve (`-g 1 1`), no auto brightness adjustment (`-W`),
+and half-size quick interpolation (`-h`). It saves as a `.tiff` file (`-T`) and
+runs in verbose mode to show what it's doing (`-v`, optional).
 
 The image on the right is processed with the same script used earlier.
 
@@ -225,7 +230,7 @@ to certain camera models.
 tlmerge uses [rawpy](https://pypi.org/project/rawpy/) to develop images, which
 is an interface for [LibRaw](https://www.libraw.org) (itself a fork of `dcraw`).
 
-LibRaw provides support for additional demosaicing algorithms.
+LibRaw provides support for additional demosaicing algorithms:
 
 - AAHD
 - AFD
@@ -250,3 +255,89 @@ and tlmerge, and thus they are not included by default.
 You may have noticed that the interpolated image of the seagull above is
 considerably brighter than the raw image. Combining the luminance of all three
 colors within each pixel makes the overall image considerably brighter.
+
+# White Balance
+
+So far, our raw images have looked very green. The bayer filter uses twice as
+many green pixels as red or blue, so the total amount of green is somewhat
+excessive.
+
+In the interpolated [seagull image](images/demosaic_interpolation.png) above,
+there's a bit less green overall, but we can tell from the seagull (which
+should be white) that our white balance is off.
+
+I won't explain everything about white balance here, but suffice it to say that
+it's more complicated than a one-time correction for every photo on a certain
+camera. We need it not only to account for the extra green pixels in the sensor
+but also because of the lighting conditions in the photo.
+
+If you've edited photos before in software like Adobe Lightroom, you probably
+think about white balance in terms of **temperature** and **tint**. Temperature
+adjusts blue/yellow, and tint adjusts green/magenta. While that's a helpful,
+user-friendly approach, white balance on a raw photo doesn't actually work that
+way.
+
+Remember how the sensor is a bunch of red, green, and blue pixels? We correct
+white balance by multiplying each of those colors by some number. Setting the
+white balance in tlmerge looks like this:
+
+```yaml
+white_balance:
+  red: 2.2583
+  green_1: 1.0
+  blue: 1.6678
+  green_2: 1.0
+```
+
+Each color channel is assigned its own **multiplier** (also called its
+**coefficient**). If the coefficient is `1.0`, it has no effect, as anything
+multiplied by 1 is itself.
+
+Note the two different green multipliers. On some cameras, the two greens are
+slightly different. Most of the time, however, we can use the same multiplier
+(also called the **coefficient**) for both of them.
+
+![Two RGBG bayer patterns of pixels: original on the left and the scaled values
+using white balance multipliers on the right. Four arrows between the images
+show the multipliers for each color.](images/white_balance_pixels.png)
+
+This is a bit of an oversimplification, but generally speaking, the multipliers
+are applied to the pixels of the corresponding color when processing the raw
+image.
+
+In the above example, you can see that the large 2.2583x multiplier for the red
+channel significantly increased the amount of red in the image. If we apply
+that to the full seagull image from earlier, the strong green tint disappears.
+
+![mosaic_white_balance.png](images/mosaic_white_balance.png)
+
+The white balanced image (on the right) is closer to the actual colors as a
+human sees it. Additionally, our white balance coefficients increased the values
+of the red and blue pixels, the image is slightly brighter. However, it still
+looks pretty underexposed. Remember that this uses the bayer pattern, so each
+pixel only displays one of the three colors. Once we interpolate, adjust for
+the sensor's black and white levels, and apply a gamma correction, it'll look
+a lot better.
+
+We can also apply these white balance multipliers to the half-size interpolated
+image:
+
+![interpolated_white_balance.png](images/interpolated_white_balance.png)
+
+<details>
+  <summary>(Expand for processing command)</summary>
+
+The following `dcraw` command was used to generate the white-balanced image.
+It's the same as the interpolated one earlier but with updated white balance
+multipliers.
+
+```
+dcraw -T -r 2.2583 1 1.6678 1 -g 1 1 -W -h -v seagull.nef
+```
+
+The `-r` flag sets white balance: `-r [red] [green1] [blue] [green2]`.
+
+</details>
+
+This looks just about perfect, but we could always make fine adjustments to
+the coefficients if necessary.
