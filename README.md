@@ -1,8 +1,11 @@
 # tlmerge
 
-tlmerge is a Python script/library for developing timelapses from raw images. It
-converts images to high-bitrate, "visually lossless" ProRes files that can be
-further processed in a video editor of choice.
+tlmerge is a Python program for developing high-bitrate, visually lossless
+timelapses videos from raw images.
+
+> [!IMPORTANT]
+> If you are not familiar with the details of raw photo development, you should
+> read the documentation [here](docs/raw_processing.md) before using tlmerge.
 
 tlmerge is designed with large timelapses in mind, especially those spanning
 multiple days. It supports variable frame rates, changing camera settings, and
