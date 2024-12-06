@@ -1,4 +1,4 @@
-> [~WARNING]
+> [!WARNING]
 > This document includes images with an un-interpolated bayer pattern, which can
 > cause rapid flickering when rendered based on the zoom level and
 > interpolation. Zooming in or out may help fix this.
