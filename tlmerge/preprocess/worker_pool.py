@@ -80,7 +80,7 @@ class WorkerPool:
                  results: Queue = None,
                  name_prefix: str = 'wkr-',
                  on_close_hook: Callable | None = None,
-                 error_handler: Callable[[Exception], bool] | None = None,
+                 error_handler: Callable[[Exception, str], bool] | None = None,
                  task_queue_size: int = 0,
                  daemon: bool = True) -> None:
         """
@@ -161,12 +161,12 @@ class WorkerPool:
         # errors (self._errors and self._exception), state, (self._state),
         # and worker threads (self._workers and self._new_worker_counter)
         self._lock = Lock()
-    
+
     @property
     def state(self) -> WorkerPoolState:
         with self._lock:
             return self._state
-    
+
     @property
     def error_count(self) -> int:
         """
@@ -177,7 +177,7 @@ class WorkerPool:
 
         with self._lock:
             return len(self._errors)
-        
+
     @property
     def worker_count(self) -> int:
         """
@@ -253,7 +253,7 @@ class WorkerPool:
                     elif self._state == WorkerPoolState.FINISHED:
                         if self._exception is not None:
                             raise self._exception
-                    
+
                     raise RuntimeError(
                         f"Worker pool {self._state.name} while waiting "
                         "to add task, as task queue is full"
@@ -347,7 +347,7 @@ class WorkerPool:
 
         with self._lock:
             fatal = isinstance(err, MemoryError) or \
-                not isinstance(err, Exception)
+                    not isinstance(err, Exception)
 
             if fatal or self._error_handler is None:
                 _log.error(
@@ -365,8 +365,10 @@ class WorkerPool:
                     # If not yet reached the error threshold, exit
                     if len(self._errors) <= self._error_threshold:
                         return
-            elif self._error_handler(err, identifier):
-                # If it's caught by the error handler, do nothing
+            elif self._error_handler(err, identifier):  # noqa
+                # If it's caught by the error handler, do nothing. (Noqa to
+                # ignore warning that err is BaseException. It can't be, or
+                # else fatal would be True, and this would be unreachable).
                 return
 
             # If already cancelling, exit this worker. Otherwise, set to
@@ -385,9 +387,9 @@ class WorkerPool:
                 if len(self._workers) == 1:
                     break
                 worker = self._workers[i]
-            
+
             # If this thread is worker #1, don't join it (lest we deadlock).
-            # Instead start joining on worker #2.
+            # Instead, start joining on worker #2.
             if worker == cur_thread:
                 i = 1
                 continue
