@@ -22,7 +22,7 @@ and assembled with [ffmpeg](https://ffmpeg.org/).
 
 # Installation
 
-Currently, you can install tlmerge by cloning the GitHub respository:
+Currently, you can install tlmerge by cloning the GitHub repository:
 
 ```
 git clone https://github.com/kwilinsi/tlmerge
