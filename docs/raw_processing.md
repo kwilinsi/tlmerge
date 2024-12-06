@@ -1,10 +1,11 @@
-> **Warning:** This document includes images with an un-interpolated bayer
-> pattern, which can cause rapid flickering when rendered based on the zoom
-> level and interpolation. Zooming in or out may help fix this.
+> [~WARNING]
+> This document includes images with an un-interpolated bayer pattern, which can
+> cause rapid flickering when rendered based on the zoom level and
+> interpolation. Zooming in or out may help fix this.
 
-# Processing a Raw Image
+# Processing a Raw Photo
 
-tlmerge is designed for photographers who are familiar with how raw images work.
+tlmerge is designed for photographers who are familiar with how raw photos work.
 
 Often, people think of "shooting in raw" as an alternative to `.jpg` images that
 preserves more detail, especially in the highlights and shadows. As opposed to
@@ -12,15 +13,15 @@ preserves more detail, especially in the highlights and shadows. As opposed to
 when you edit your photos in Lightroom.
 
 This is true, but there's more to it. If you use software like Lightroom to
-process your raw photos, and you're not familiar with the details of raw images
+process your raw photos, and you're not familiar with the details of raw photos
 processing, you'll want to read over this document before using tlmerge.
 
 You might think that converting a `.cr3` file (a raw format used by Canon) into
 a `.jpg` is as simple as converting a `.jpg` to a `.png`. However, this is not
 the case. There are few interpretive decisions you have to make when converting
-a raw image.
+a raw photos.
 
-Additionally, note that RAW image here doesn't mean a `.raw` file. Rather, it
+Additionally, note that raw photo here doesn't mean a `.raw` file. Rather, it
 collectively refers to many image formats from each camera manufacturer that
 store raw data from the camera sensor. To quote the
 `dcraw` [documentation](https://www.dechifro.org/dcraw/):
@@ -28,9 +29,27 @@ store raw data from the camera sensor. To quote the
 > "raw" is an English word, not an acronym or file format. "raw photo" \[is\]
 > the same adjective that you would use for "crude oil" or "raw materials".
 
+# Follow Along
+
+This document uses a few external tools to develop raw photos for demonstration
+purposes. If you'd like to follow along with images of your own to better
+understand the raw development process, you should download and install these
+tools:
+
+- [rawpy](https://pypi.org/project/rawpy/), a Python wrapper for:
+- [LibRaw](https://www.libraw.org), a community-driven fork of:
+- [dcraw](https://www.dechifro.org/dcraw/), a command line tool for developing
+  raw photos.
+- [Histogrammar](http://guillermoluijk.com/software/histogrammar/index.htm), a
+  histogram viewer designed to work well with dcraw.
+
+Below many of the images in this document you'll find an accordian—a
+collapsible bit of text beginning with a `▶` symbol—that you can unfurl to see
+how the image was developed.
+
 # The Camera Sensor
 
-The first step in understanding raw images is understanding how the camera
+The first step in understanding raw photo is understanding how the camera
 sensor works. As you can probably guess, each "pixel" in an image corresponds
 to one very tiny photodetector on the camera sensor.
 
@@ -103,7 +122,7 @@ with rawpy.imread('beach.nef') as img:  # open raw Nikon image
 
 </details>
 
-There are three things in particular to notice about the raw image:
+There are three things in particular to notice about the raw photo:
 
 ### It's green
 
@@ -125,7 +144,7 @@ so green.
 ### It's dark
 
 As a whole, the image is rather dark. There are a couple of reasons for this.
-For one, no gamma correction was applied to the raw image to brighten it on a
+For one, no gamma correction was applied to the raw photo to brighten it on a
 log scale (more on this later). Additionally, computer monitors display color
 with three LEDs for each pixel: one red, one green, and one blue. In order to
 get the brightest output (solid white), all three LEDs must be maxed. However,
@@ -134,7 +153,7 @@ on the screen, two LEDs aren't on at all, and the image looks dark.
 
 ---
 
-In order to process a raw image so that it looks like the version on the left,
+In order to process a raw photo so that it looks like the version on the left,
 we'll need to fix all these problems. The rest of this document outlines that
 process. Additionally, there are some other things we can do in the processing
 stage to make the image look even better. We'll cover some of those as well.
@@ -226,8 +245,8 @@ It also includes the `-f` flag to interpolate RGBG as four colors. This treats
 the two green values in each 2x2 grid as separate colors, which is specific
 to certain camera models.
 
-tlmerge uses [rawpy](https://pypi.org/project/rawpy/) to develop images, which
-is an interface for [LibRaw](https://www.libraw.org) (itself a fork of `dcraw`).
+tlmerge uses rawpy to develop images, which is an interface for LibRaw (itself a
+fork of dcraw).
 
 LibRaw provides support for additional demosaicing algorithms:
 
@@ -253,12 +272,12 @@ LibRaw provides support for additional demosaicing algorithms:
 ### Brightness
 
 You may have noticed that the interpolated image of the seagull above is
-considerably brighter than the raw image. Combining the luminance of all three
+considerably brighter than the raw photo. Combining the luminance of all three
 colors within each pixel makes the overall image considerably brighter.
 
 # White Balance
 
-So far, our raw images have looked very green. The bayer filter uses twice as
+So far, our raw photo have looked very green. The bayer filter uses twice as
 many green pixels as red or blue, so the total amount of green is somewhat
 excessive.
 
@@ -404,7 +423,7 @@ It was then resized down to save space.
 </details>
 
 <p id="raw-unscaled-16bit-photo">
-We can start by converting the raw image directly to a `tiff`: no interpolation,
+We can start by converting the raw photo directly to a `tiff`: no interpolation,
 no white balance correction, no gamma curve, and no white/black level scaling.
 Here's what that looks like:
 </p>
@@ -474,15 +493,14 @@ adjustments, but the output is no longer 16-bit.
 </details>
 
 Obviously, this looks very dark. Much darker, in fact, than the [supposedly
-unprocessed raw image](#the-camera-sensor) from earlier. That's because in order
+unprocessed raw photo](#the-camera-sensor) from earlier. That's because in order
 to clearly show the RGB bayer pattern with colored pixels, it was necessary to
 scale the luminance values of each pixel with a white level in mind. This time,
 we're looking at the true, uncolored and unscaled raw data straight out of the
 camera.[^2]
 
-We can view this unprocessed data in a histogram
-using [Histogrammar](http://guillermoluijk.com/software/histogrammar/index.htm)
-to identify the white and black levels.
+We can view this unprocessed data in a histogram using Histogrammar to identify
+the white and black levels.
 
 ![Screenshot of the Histogrammar tool showing the full range at 1/128 zoom. The
 blue line plotting the image is hardly
