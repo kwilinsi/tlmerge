@@ -15,9 +15,10 @@ and assembled with [ffmpeg](https://ffmpeg.org/).
 
 ---
 
-**Note:** tlmerge is currently in active development, and thus not all features
-are fully implemented. It works best via the CLI, and only the scanning and
-preprocessing stages are completely functional.
+> [!NOTE]
+> tlmerge is currently in active development, and thus not all features are
+> fully implemented. It works best via the CLI, and only the scanning and
+> preprocessing stages are completely functional.
 
 # Installation
 
@@ -104,5 +105,5 @@ overrides that configuration specifically for photos in the group `a`.
 It's also possible to override all configuration files through command line
 arguments.
 
-You can find more information about tlmerge
-configuration [here](docs/config.md).
+You can find more information about tlmerge configuration
+[here](docs/config.md).

@@ -97,8 +97,9 @@ The behavior of this configuration is based on the `PATH` value:
 - If the `PATH` is omitted entirely, log messages are not written to any file.
   You can use this along with the `silent` flag to disable all logging.
 
-Note that tlmerge uses a rotating handler for the log file, storing up to 5
-backups of 5 MB each.
+> [!NOTE]
+> tlmerge uses a rotating handler for the log file, storing up to 5 backups of 5
+> MB each.
 
 ### `verbose`
 
@@ -124,9 +125,10 @@ errors.
 Do not log anything in the console, even error messages. The program will not
 produce any output.
 
-Note that in some cases this may still log errors pertaining to the
-configuration itself. This could happen if the CLI or configuration file is
-malformed such that it encounters an error before reading the `silent` flag.
+> [!NOTE]
+> In some cases this may still log errors pertaining to the configuration
+> itself. This could happen if the CLI or configuration file is malformed such
+> that it encounters an error before reading the `silent` flag.
 
 ## Execution
 
@@ -148,9 +150,10 @@ maximum number of photos that can fail before the program will halt. This allows
 recovery from one or two malformed photos without cancelling an entire
 operation. Set this to zero to halt as soon as a single task fails.
 
-Note that this only applies to errors encountered while using worker pools with
-one or more workers, not all errors during program execution. By default, this
-is five.
+> [!NOTE]
+> This only applies to errors encountered while using worker pools with one or
+> more workers, not all errors during program execution. By default, this is
+> five.
 
 ### `sample`
 

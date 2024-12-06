@@ -245,9 +245,10 @@ LibRaw provides support for additional demosaicing algorithms:
 - VCD_MODIFIED_AHD
 - VNG
 
-Note that some of these algorithms are included in GPL2– and GPL3-licensed
-demosaic packs. These are not compatible with the MIT license used by rawpy
-and tlmerge, and thus they are not included by default.
+> [!IMPORTANT]
+> Some of these algorithms are included in GPL2– and GPL3-licensed demosaic
+> packs. These are not compatible with the MIT license used by rawpy and
+> tlmerge, and thus they are not included by default.
 
 ### Brightness
 
@@ -461,11 +462,12 @@ dcraw -T -D -W -g 1 1 -v sunset.nef
 The `-4` flag was substituted with `-W -g 1 1`. It still disables the brightness
 adjustments, but the output is no longer 16-bit.
 
-**Note:** Strictly speaking, you might want to use `-E` instead of `-D` if
-you're doing this yourself. The `-D` flag doesn't include the thin border of
-pixels around the image that are used to get better interpolation results.
-If you're using a picture with clear bright and dark areas, however, that
-shouldn't make any difference.
+> [!NOTE]
+> Strictly speaking, you might want to use `-E` instead of `-D` if you're doing
+> this yourself. The `-D` flag doesn't include the thin border of pixels around
+> the image that are used to get better interpolation results. If you're using a
+> picture with clear bright and dark areas, however, that shouldn't make any
+> difference.
 
 ---
 
@@ -615,9 +617,10 @@ dcraw -D -4 -c [bright_photo] | pamsumm -max
 - We can then pipe the image into `pamsumm`, which computes the max luminance
   value across all pixels.
 
-If you want to include the border pixels in the sensor that typically excluded
-from processed photos, you can replace `-D` with `-E`. It does all the same
-things without cropping out those border pixels.
+> [!NOTE]
+> If you want to include the border pixels in the sensor that typically excluded
+> from processed photos, you can replace `-D` with `-E`. It does all the same
+> things without cropping out those border pixels.
 
 ---
 
