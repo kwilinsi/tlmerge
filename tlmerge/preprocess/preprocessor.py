@@ -346,9 +346,7 @@ class Preprocessor:
 
         return True
 
-    def _apply_metadata(
-            self,
-            session: Session) -> bool:
+    def _apply_metadata(self, session: Session) -> bool:
         """
         Get the next PhotoMetadata record from the preprocessing workers. Apply
         any changes to the corresponding database record, and flush those
@@ -357,10 +355,6 @@ class Preprocessor:
         If the metadata queue is empty, do nothing.
 
         :param session: The current database session.
-        :param metrics: The preprocessing metrics tracking summary statistics.
-        :param table: The progress table with summary statistics.
-        :param pbar: The progress bar associated with the table to update
-         whenever a photo is finished.
         :return: False if and only if the worker pool finished, and there are no
          more metadata records to process.
         """
