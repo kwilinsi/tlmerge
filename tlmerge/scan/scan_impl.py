@@ -8,7 +8,7 @@ from typing import Any, Optional
 import rawpy
 from rawpy import LibRawFileUnsupportedError, LibRawIOError, LibRawError
 
-from tlmerge.conf import CONFIG, DEFAULT_CONFIG_FILE
+from tlmerge.conf import ConfigManager, DEFAULT_CONFIG_FILE
 from tlmerge.db import MAX_DATE_LENGTH, MAX_GROUP_LENGTH, MAX_PHOTO_NAME_LENGTH
 from .metrics import ScanMetrics
 
@@ -27,7 +27,7 @@ _GROUP_ORDERING_POLICIES: dict[str, tuple[Optional[Callable], Callable]] = {
 
 
 def iterate(root: Path,
-            excluded: list[str],
+            excluded: set[str],
             max_length: int,
             yield_dirs: bool = True,
             map_func: Callable[[str], Any] | None = None) -> \
@@ -37,8 +37,8 @@ def iterate(root: Path,
     directories as required.
 
     :param root: The root directory to scan. Scanning is not recursive.
-    :param excluded: A list of any names of any items to exclude. (These
-     are strictly file/directory names, not full paths).
+    :param excluded: A set of names of any items to exclude. (These are
+     strictly file/directory names, not full paths).
     :param max_length: The maximum length of an item. This is used to ensure
      compatibility with the database. Any items that pass the map_func but
      exceed the max_length are skipped and trigger a warning message.
@@ -165,7 +165,7 @@ def yield_gen(generator: Iterable[tuple[Path, Any]],
 
 def iter_dates(project_root: Path,
                date_format: str,
-               excluded: list[str], *,
+               excluded: set[str], *,
                order: bool = False,
                randomize: bool = False,
                yield_count: bool = False) -> Generator[int | Path, None, None]:
@@ -176,7 +176,7 @@ def iter_dates(project_root: Path,
 
     :param project_root: The root project directory containing the dates.
     :param date_format: The format string to use when parsing the dates.
-    :param excluded: A list of any dates to exclude.
+    :param excluded: A set of any dates to exclude.
     :param order: Whether to yield the dates in chronological order. Defaults
      to False.
     :param randomize: Whether to yield the dates in a random order.  Defaults
@@ -201,6 +201,7 @@ def iter_dates(project_root: Path,
 
 
 def iter_groups(date_dir: Path, *,
+                config: ConfigManager,
                 order: bool = False,
                 randomize: bool = False,
                 scan_all: bool = False,
@@ -210,6 +211,7 @@ def iter_groups(date_dir: Path, *,
     are the group directories, which contain photos.
 
     :param date_dir: The date directory containing the groups.
+    :param config: The `tlmerge` configuration.
     :param order: Whether to sort and yield the groups in order.  Defaults to
      False.
     :param randomize: Whether to yield the groups in a random order. Defaults
@@ -225,13 +227,13 @@ def iter_groups(date_dir: Path, *,
 
     # Get the Config record specific to this date
     date_name = date_dir.name
-    cfg = CONFIG[date_name]
+    date_cfg = config[date_name]
 
     # Get the group ordering policy
-    group_ordering = cfg.group_ordering
+    group_ordering = date_cfg.group_ordering()
 
     # Determine which (if any) groups to exclude
-    excluded = [] if scan_all else cfg.get_excluded_groups(date_name)
+    excluded = [] if scan_all else date_cfg.exclude_groups()
 
     # Iterate over and yield the groups
     yield from yield_gen(
@@ -248,7 +250,8 @@ def iter_groups(date_dir: Path, *,
 
 
 def iter_photos_in_group(
-        group_dir: Path, *,
+        group_dir: Path,
+        excluded: set[str], *,
         order: bool = False,
         randomize: bool = False) -> \
         Generator[Path, None, None]:
@@ -256,15 +259,13 @@ def iter_photos_in_group(
     Iterate over all the photos in a particular group directory.
 
     :param group_dir: The group directory containing the photos to retrieve.
+    :param excluded: A set of photo names to exclude.
     :param order: Whether to sort and yield the photos in order. Defaults to
      False.
     :param randomize: Whether to yield the photos in a random order. Defaults
      to False.
     :return: A generator yielding paths to matching photo files.
     """
-
-    # TODO add config option for excluding individual photos
-    excluded = []
 
     # Retrieve all the photo files (making sure not to include config files)
     yield from yield_gen(
@@ -281,10 +282,12 @@ def iter_photos_in_group(
 
 
 # noinspection PyProtectedMember
-def iter_photos(*, metrics: ScanMetrics,
+def iter_photos(*,
+                config: ConfigManager,
+                metrics: ScanMetrics,
                 project_root: Path,
                 date_format: str,
-                excluded_dates: list[str],
+                excluded_dates: set[str],
                 order: bool,
                 validate: bool = False,
                 sample: int = -1) -> Generator[Path, None, None]:
@@ -293,6 +296,7 @@ def iter_photos(*, metrics: ScanMetrics,
     Ordering is optional. Use `iter_all_photos_random` to yield in a random
     order.
 
+    :param config: The `tlmerge` configuration.
     :param metrics: Scanner metrics to track the progress and collect summary
      statistics.
     :param project_root: See `iter_dates()`.
@@ -326,15 +330,26 @@ def iter_photos(*, metrics: ScanMetrics,
     # Iterate over each date
     for date_dir in date_gen:
         # Get the group generator so we can get the group count
-        group_gen = iter_groups(date_dir, order=order, yield_count=True)
-        metrics._start_date(date_dir.name, next(group_gen))
+        group_gen = iter_groups(
+            date_dir,
+            config=config,
+            order=order,
+            yield_count=True
+        )
+        date_name = date_dir.name
+        metrics._start_date(date_name, next(group_gen))
 
         # Iterate over each group
         for group_dir in group_gen:
-            metrics._start_group(group_dir.name)
+            group_name = group_dir.name
+            metrics._start_group(group_name)
 
             # Iterate over each photo
-            for photo in iter_photos_in_group(group_dir, order=order):
+            for photo in iter_photos_in_group(
+                    group_dir,
+                    config[date_name, group_name].exclude_photos(),
+                    order=order
+            ):
                 invalid = validate and not is_rawpy_compatible(str(photo))
 
                 if not invalid:
@@ -363,27 +378,34 @@ class DateIterator:
 
     def __init__(self,
                  date_dir: Path,
-                 metrics: ScanMetrics) -> None:
+                 metrics: ScanMetrics,
+                 config: ConfigManager) -> None:
         """
         Initialize a DateData record for the given date.
 
         :param date_dir: The date directory associated with this data.
         :param metrics: The scan metrics, used to start the date and group and
          get the row number in the progress table.
+        :param config: The `tlmerge` configuration.
         :return: None
         :raises StopIteration: If there are no groups in this date directory.
         """
 
-        self.row: int = metrics._start_date(date_dir.name, next_row=True)
+        self.date_name: str = date_dir.name
+        self.config: ConfigManager = config
+
+        self.row: int = metrics._start_date(self.date_name, next_row=True)
         self.group_gen: Generator[Path, None, None] = iter_groups(
-            date_dir, randomize=True
+            date_dir, config=config, randomize=True
         )
 
         # Load the next group
         group = next(self.group_gen)
         metrics._start_group(group.name)
         self.photo_gen: Generator[Path, None, None] = iter_photos_in_group(
-            group, randomize=True
+            group,
+            config[self.date_name, group.name].exclude_photos(),
+            randomize=True
         )
 
     def next_photo(self, metrics: ScanMetrics) -> Path | None:
@@ -409,10 +431,13 @@ class DateIterator:
                 # No more photos in this generator: on to next group
                 try:
                     group = next(self.group_gen)
+                    g_name = group.name
                     self.photo_gen = iter_photos_in_group(
-                        group, randomize=True
+                        group,
+                        self.config[self.date_name, g_name].exclude_photos(),
+                        randomize=True
                     )
-                    metrics._start_group(group.name)
+                    metrics._start_group(g_name)
                 except StopIteration:
                     # No more groups; this date is done
                     return None
@@ -420,9 +445,10 @@ class DateIterator:
 
 # noinspection PyProtectedMember
 def iter_photos_random(metrics: ScanMetrics,
+                       config: ConfigManager,
                        project_root: Path,
                        date_format: str,
-                       excluded_dates: list[str],
+                       excluded_dates: set[str],
                        sample_size: int,
                        validate: bool = False) -> Generator[Path, None, None]:
     """
@@ -440,6 +466,7 @@ def iter_photos_random(metrics: ScanMetrics,
 
     :param metrics: Scanner metrics to track the progress and collect summary
      statistics.
+    :param config: The `tlmerge` configuration.
     :param project_root: See `iter_dates()`.
     :param date_format: See `iter_dates()`.
     :param excluded_dates: See `iter_dates()` `excluded` parameter.
@@ -485,7 +512,7 @@ def iter_photos_random(metrics: ScanMetrics,
                 continue
 
             try:
-                open_dates.append(DateIterator(date_dir, metrics))
+                open_dates.append(DateIterator(date_dir, metrics, config))
             except StopIteration:
                 # This date is empty; skip it
                 _log.debug(f'Date "{date_dir.name}" has no groups')

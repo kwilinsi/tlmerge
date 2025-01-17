@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import sys
 
-from .validation import validate_log_level
 from .const import DEFAULT_CONFIG_FILE, DEFAULT_DATABASE_FILE, DEFAULT_LOG_FILE
 
 
@@ -308,10 +307,19 @@ def _validate(args: Namespace) -> None:
     """
 
     # Make sure the user didn't try to use multiple log level flags
-    try:
-        validate_log_level(args.verbose, args.quiet, args.silent)
-    except ValueError as e:
-        sys.exit(str(e))
+    e = None
+    if args.verbose and args.quiet and args.silent:
+        e = "'verbose', 'quiet', and 'silent'"
+    elif args.verbose and args.quiet:
+        e = "'verbose' and 'quiet'"
+    elif args.verbose and args.silent:
+        e = "'verbose' and 'quiet'"
+    elif args.quiet and args.silent:
+        e = "'quiet' and 'silent'"
+
+    if e:
+        raise ValueError(f"You can't use {e} log levels at the same time. "
+                         "Pick one.")
 
     # Resolve and validate the timelapse project directory
     try:

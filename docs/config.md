@@ -187,6 +187,17 @@ Set the format used for parsing and identifying the date directories. Defaults
 to `yyyy-mm-dd`. Any directories in the project root that do not conform to this
 format are not considered dates and are thus ignored.
 
+Note that this format string is passed to `datetime.strptime()`
+(see [docs](https://docs.python.org/3/library/datetime.html#datetime.datetime.strptime)),
+which expects formats like `%m/%d/%Y`. Tlmerge attempts to automatically convert
+formats like `yyyy-mm-dd` to `%Y-%m-%d`.
+
+> [!WARNING]
+> As of Python 3.13, the standard library emits
+> a [DeprecationWarning](https://docs.python.org/3/library/exceptions.html#DeprecationWarning)
+> when you use a format string with a month and date but no year, due to a
+> possible leap year bug.
+
 ### Exclude Dates
 
 - CLI: `--exclude_dates [DATE ...]`

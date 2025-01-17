@@ -11,3 +11,5 @@ DEFAULT_LOG_FILE: Path = (
         PlatformDirs('tlmerge', appauthor=False).user_log_path /
         'tlmerge.log'
 )
+
+ENV_VAR_PREFIX = 'TLMERGE'

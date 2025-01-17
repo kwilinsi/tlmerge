@@ -1,4 +1,6 @@
 from collections import deque
+from enum import Enum
+from os import PathLike
 from pathlib import Path
 import sys
 from typing import Literal, Self
@@ -10,15 +12,23 @@ from logging import Filter, Formatter, Handler, LogRecord, Logger, StreamHandler
 from logging.handlers import RotatingFileHandler
 
 
-def configure_log(file: Path | None,
-                  console: Literal['verbose', 'quiet', 'silent'] | None):
+class LogLevel(Enum):
+    VERBOSE = 0
+    DEFAULT = 1
+    QUIET = 2
+    SILENT = 3
+
+
+def configure_log(file: PathLike | str | None,
+                  console: LogLevel | None):
     """
     Configure the logging module.
 
     Note that in console 'verbose' mode, all warnings are logged. This will
     also affect the log file, if enabled.
 
-    :param file: The output file for logs, or None to disable file logging.
+    :param file: The path to the output file for logs, or None to disable file
+     logging.
     :param console: Whether to log debug messages (verbose), only
      warnings/errors (quiet), or nothing at all (silent) in the console.
     :return: None
@@ -27,18 +37,19 @@ def configure_log(file: Path | None,
     # Configure the root logger
     root: Logger = logging.getLogger()
 
-    if console == 'silent':
+    if console == LogLevel.SILENT:
         # Suppress all console messages
         root.setLevel(logging.CRITICAL + 1)
         to_console = False
     else:
-        level = logging.INFO
-        if console == 'verbose':
-            warnings.simplefilter('always')
+        if console == LogLevel.VERBOSE:
             level = logging.DEBUG
-        elif console == 'quiet':
+        elif console == LogLevel.QUIET:
             level = logging.WARNING
+        else:
+            level = logging.INFO
 
+        warnings.simplefilter('always')
         _add_console_logger(root, level)
         to_console = True
 
@@ -47,7 +58,7 @@ def configure_log(file: Path | None,
     if file is not None:
         # Set root level to ensure all DEBUG messages to go log file
         root.setLevel(logging.DEBUG)
-        _add_file_handler(root, file)
+        _add_file_handler(root, Path(file))
 
     ########################################
 
@@ -148,7 +159,7 @@ class LogBuffer(Filter):
         suppresses and saves all log messages sent to the handler and then
         sends them all at once after the buffer is released.
 
-        Use the max_size paramater to prevent excessive memory usage with lots
+        Use the max_size parameter to prevent excessive memory usage with lots
         of log messages. When the max size is reached, messages are discarded
         based on their log level and age. That is, all DEBUG messages are
         removed first (starting with the oldest one), followed by INFO,
@@ -265,12 +276,12 @@ def buffer_console_log(**kwargs) -> LogBuffer:
     """
     Get a LogBuffer that will buffer log messages sent to the console. This
     uses the first handler it finds on the root log that is (a) a
-    StreamHandler and (b) streams to sys.stdout or sys.stderr.
+    StreamHandler and (b) streams to `sys.stdout` or `sys.stderr`.
 
     Start the buffer with LogBuffer.start() or by opening it in a context
     manager.
 
-    :param **kwargs: Additional arguments to pass to LogBuffer().
+    **kwargs: Additional arguments to pass to LogBuffer().
     :return: A buffer that will run on the console handler.
     :raise RuntimeError: If no console handler can be found.
     """

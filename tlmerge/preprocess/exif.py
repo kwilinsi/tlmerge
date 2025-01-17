@@ -5,7 +5,7 @@ from typing import Any
 
 from exiftool import ExifToolHelper
 
-from tlmerge.conf import CONFIG
+from tlmerge.conf import ConfigManager, RootConfig
 from .metadata import PhotoMetadata
 
 
@@ -44,6 +44,7 @@ def parse_date_time(dt_string: str,
 
 class ExifData:
     def __init__(self,
+                 config: ConfigManager,
                  exif_raw: dict[str, Any],
                  exif_fmt: dict[str, Any]) -> None:
         """
@@ -55,6 +56,7 @@ class ExifData:
 
         self.exif_raw: dict[str, Any] = exif_raw
         self.exif_fmt: dict[str, Any] = exif_fmt
+        self.root_cfg: RootConfig = config.root
 
     def get(self,
             *tags: str,
@@ -116,7 +118,7 @@ class ExifData:
                     # Try to get the file path/name to make the error message
                     # more helpful
                     try:
-                        name = CONFIG.root.rel_path(exif['SourceFile'])
+                        name = self.root_cfg.rel_path(exif['SourceFile'])
                     except Exception:
                         name = exif.get('File:FileName', '[Unknown Photo]')
 
@@ -249,7 +251,9 @@ class ExifWorker:
         self.exif_raw.terminate()
         self.exif_fmt.terminate()
 
-    def extract(self, file: Path | str) -> ExifData:
+    def extract(self,
+                file: Path | str,
+                config: ConfigManager) -> ExifData:
         """
         Extract EXIF metadata from the given photo file.
 
@@ -262,6 +266,7 @@ class ExifWorker:
         50 photos in a batch instead of 1 at a time.
 
         :param file: The path to the photo file.
+        :param config: The `tlmerge` configuration.
         :return: None
         :raise ExifToolException: If there is an error from PyExifTool while
          loading the EXIF data.
@@ -272,6 +277,7 @@ class ExifWorker:
         self.exif_fmt.run()
 
         return ExifData(
+            config,
             exif_raw=self.exif_raw.get_metadata(str(file))[0],
             exif_fmt=self.exif_fmt.get_metadata(str(file))[0]
         )

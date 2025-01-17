@@ -1,4 +1,5 @@
 import logging
+from os import PathLike
 from pathlib import Path
 
 from sqlalchemy import create_engine, Engine
@@ -41,18 +42,24 @@ class DBManager:
             raise ValueError('DB not yet initialized')
         return self._engine
 
-    def initialize(self, path: Path) -> None:
+    def initialize(self, path: PathLike) -> None:
         """
         Initialize the database.
 
-        :param path: Path to the database file.
+        :param path: The path to the database file.
         :return: None
         """
 
+        # If only PathLike but not a true Path, convert to pathlib.Path
+        if not isinstance(path, Path):
+            path = Path(path)
+
+        # Initialize the DB engine and session maker
         _log.debug('Initializing database engine...')
         self._engine = create_engine(f'sqlite:///{path}')
         self._session_maker = sessionmaker(bind=self._engine)
 
+        # Create tables if they don't already exist
         with self._engine.begin() as conn:
             Base.metadata.create_all(conn)
 

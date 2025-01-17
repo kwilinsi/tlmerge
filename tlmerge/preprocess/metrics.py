@@ -40,13 +40,17 @@ class PreprocessingMetrics(ScanMetrics):
         self._errors: int = 0
 
     @classmethod
-    def def_progress_table(cls, *, sample_size: int = -1) -> \
-            tuple[ProgressTable, TableProgressBar]:
+    def def_progress_table(
+            cls, *,
+            pbar_label: str = 'Preprocessing...',
+            sample_size: int = -1) -> tuple[ProgressTable, TableProgressBar]:
         """
         Create a new ProgressTable and associated progress bar designed to
-        work with `PreprocessingMetrics`. The table includes additinal columns
+        work with `PreprocessingMetrics`. The table includes additional columns
         beyond those required for `ScanMetrics`.
 
+        :param pbar_label: The text description for the progress bar. Defaults
+         to 'Preprocessing...'.
         :param sample_size: Set the sample size if conducting a sample. If
          this is a positive integer, the progress bar shows exact progress,
          and the total is set to the sample size. Use any negative number 
@@ -56,7 +60,7 @@ class PreprocessingMetrics(ScanMetrics):
         """
 
         table, pbar = super().def_progress_table(
-            pbar_label='Preprocessing...',
+            pbar_label=pbar_label,
             sample_size=sample_size
         )
 

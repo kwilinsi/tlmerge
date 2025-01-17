@@ -55,7 +55,7 @@ def update_estimate(*, prior: float,
 
     # Adjust prior weight with sigmoid curve based on percent elapsed
     prior_weight = 0.5 + 0.5 / (
-        1 + math.exp(-9 * ((n_elapsed - 1) / n_total - 0.5))
+            1 + math.exp(-9 * ((n_elapsed - 1) / n_total - 0.5))
     )
 
     return prior * prior_weight + observed * (1 - prior_weight)
@@ -362,7 +362,7 @@ class ScanMetrics:
         # Get row number in progress table
         if row_num is None:
             row_num = self._table_index[photo.parent.parent.name
-                                        if date_str is None else date_str]
+            if date_str is None else date_str]
 
         # Update progress table
         self._table.update('Photos', -1, row=row_num)
@@ -456,9 +456,9 @@ class ScanMetrics:
 
             # Update the estimated number of groups
             self._est_total_groups = (
-                self._total_groups / (
+                    self._total_groups / (
                     self._total_dates - self._dates_remaining) *
-                self._total_dates
+                    self._total_dates
             )
 
         # Return row number in progress table
@@ -490,11 +490,12 @@ class ScanMetrics:
         # Update the ratio of total groups processed unless using a fixed sample
         if not self._fixed_sample:
             self._est_group_ratio = (
-                (self._total_groups - self._groups_remaining) /
-                self._est_total_groups
+                    (self._total_groups - self._groups_remaining) /
+                    self._est_total_groups
             )
 
-    def _next_photo(self, invalid: bool = False, row: int | None = None) -> bool:
+    def _next_photo(self, invalid: bool = False,
+                    row: int | None = None) -> bool:
         """
         This is called by the scanner every time a photo is scanned. It
         increments the appropriate counters.
@@ -506,7 +507,7 @@ class ScanMetrics:
          used when conducting a fixed sample. Defaults to None.
         :return: True if (a) using a fixed-size sample, and (b) the sample
          size was reached with this photo (meaning it's time to stop
-         scanning). Otherwise False.
+         scanning); otherwise False.
         :raises ValueError: If a row number is given when not using a fixed
          sample.
         """
@@ -764,7 +765,6 @@ class ScanMetrics:
             photos_str = f"{total:,} file{'' if total == 1 else 's'}"
 
         # Build a string with the number of groups and dates
-        dates = self._total_dates - self._dates_remaining
         group_date_str = (
             f"from {self.scanned_groups} "
             f"group{'' if self.scanned_groups == 1 else 's'} in "
@@ -775,6 +775,7 @@ class ScanMetrics:
         # Log a different warning message if using a fixed-sample, and the
         # sample size wasn't met
         if self._fixed_sample and total < self._estimate:
+            # noinspection SpellCheckingInspection
             _log.warning(
                 f"{'Randomly s' if random else 'S'}ampled {photos_str} "
                 f"{group_date_str}. Unable to meet desired sample size of "

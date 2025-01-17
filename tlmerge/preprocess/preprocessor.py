@@ -5,8 +5,6 @@ from threading import Event, local
 
 import imageio.v3 as iio
 import numpy as np
-from progress_table import ProgressTable
-from progress_table.v1.progress_table import TableProgressBar
 import rawpy
 # noinspection PyUnresolvedReferences
 from rawpy import (LibRawError, LibRawFileUnsupportedError, LibRawIOError,
@@ -15,7 +13,7 @@ from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from tlmerge.conf import CONFIG, buffer_console_log
+from tlmerge.conf import buffer_console_log, ConfigManager, RootConfig
 from tlmerge.db import DB, Photo
 from tlmerge.scan import enqueue_thread
 from .exif import ExifWorker
@@ -38,15 +36,17 @@ class Preprocessor:
     # leads to some queues filling up quickly
     QUEUE_MAX_SIZE: int = 300
 
-    def __init__(self) -> None:
+    def __init__(self, config: ConfigManager) -> None:
         """
         Initialize the preprocessor.
 
+        :param config: The `tlmerge` configuration.
         :return: None
         """
 
-        # Determine the number of workers to use
-        self.cfg = CONFIG.root
+        # Get the root config
+        self.config: ConfigManager = config
+        self.root_cfg: RootConfig = config.root
 
         # Local storage for each worker thread; used to access the exif worker
         self._thread_data = local()
@@ -132,8 +132,8 @@ class Preprocessor:
         :return: The number of workers to use in the photo preprocessing pool.
         """
 
-        sample, s_random, s_size = self.cfg.sample_details()
-        cfg_workers = self.cfg.workers
+        sample, s_random, s_size = self.root_cfg.sample_details()
+        cfg_workers = self.root_cfg.workers()
 
         if cfg_workers < 2:
             # Need at least 2 to account for the scanner thread
@@ -179,7 +179,8 @@ class Preprocessor:
         :return: None
         """
 
-        _log.info(f'Scanning "{self.cfg.project}" (this may take a while)')
+        proj_name = self.root_cfg.project()
+        _log.info(f'Scanning "{proj_name}" (this may take a while)')
 
         try:
             # Open database session, and run preprocessing
@@ -189,14 +190,14 @@ class Preprocessor:
             # Log an error message if it failed
             if self.cancel_event.is_set():
                 _log.critical(
-                    f'Failed to preprocess photos in {self.cfg.project}: '
+                    f'Failed to preprocess photos in {proj_name}: '
                     'execution canceled abruptly due to error(s)'
                 )
         except WorkerPoolExceptionGroup as exc_pool:
             self.cancel_event.set()
             # Log the error(s)
             _log.critical(
-                f"Failed to preprocess photos in {self.cfg.project}: "
+                f"Failed to preprocess photos in {proj_name}: "
                 f"got {exc_pool.summary()}",
                 exc_info=True
             )
@@ -208,7 +209,7 @@ class Preprocessor:
 
             # Unexpected other exception
             _log.critical(
-                f'Failed to preprocess photos in {self.cfg.project}: '
+                f'Failed to preprocess photos in {proj_name}: '
                 f'got unexpected {e.__class__.__name__}',
                 exc_info=True
             )
@@ -226,7 +227,7 @@ class Preprocessor:
 
         # Initialize the metrics, progress table, and progress bar
         table, pbar = PreprocessingMetrics.def_progress_table(
-            sample_size=self.cfg.sample_size
+            sample_size=self.root_cfg.sample_size()
         )
         self._metrics = PreprocessingMetrics(table, pbar)
 
@@ -239,6 +240,7 @@ class Preprocessor:
             enqueue_thread(
                 output=self._scanning_queue,
                 metrics=self._metrics,
+                config=self.config,
                 name='prp-scn-wkr',
                 cancel_event=self.cancel_event
             )
@@ -317,7 +319,7 @@ class Preprocessor:
             return False
 
         # This is an identifier string for the file
-        rel_path = str(self.cfg.rel_path(file))
+        rel_path = str(self.root_cfg.rel_path(file))
 
         # Load the photo from the database
         try:
@@ -327,7 +329,7 @@ class Preprocessor:
             # If the photo isn't in the database yet, make a new record
             if db_photo is None:
                 _log.debug('Creating new db record for '
-                           f'"{self.cfg.rel_path(file)}"...')
+                           f'"{self.root_cfg.rel_path(file)}"...')
                 db_photo = Photo(
                     date=date,
                     group=group,
@@ -338,7 +340,7 @@ class Preprocessor:
             self._enqueued_photos[rel_path] = db_photo
         except SQLAlchemyError as e:
             _log.error(f'Error accessing database record for '
-                       f'"{self.cfg.rel_path(file)}": {e}')
+                       f'"{self.root_cfg.rel_path(file)}": {e}')
             raise
 
         # Send the photo to the preprocessing worker pool to load its metadata
@@ -440,7 +442,7 @@ class Preprocessor:
         :raises LibRawError: If something goes wrong with RawPy/LibRaw.
         """
 
-        _log.debug(f'Loading metadata for {self.cfg.rel_path(file)}')
+        _log.debug(f'Loading metadata for {self.root_cfg.rel_path(file)}')
 
         # Create the metadata data object for storing all the values
         metadata = PhotoMetadata(*file.parts[-3:])
@@ -451,7 +453,7 @@ class Preprocessor:
             _apply_libraw_metadata(rpy_photo, metadata)
 
         # Extract and record the EXIF data
-        self._exif_worker.extract(file).record_metadata(metadata)
+        self._exif_worker.extract(file, self.config).record_metadata(metadata)
 
         # Return the complete metadata object
         return metadata

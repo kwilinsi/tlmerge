@@ -1,15 +1,15 @@
 from argparse import Namespace
-from datetime import date
+from datetime import date, datetime
 import logging
+from logging import Logger
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from ruamel.yaml import YAML
 
-from .config import Config, ConfigView, GlobalConfig, GlobalConfigView
-from .validation import GlobalConfigModel
-from . import DEFAULT_DATABASE_FILE, DEFAULT_CONFIG_FILE
+from .config import DateConfig, GroupConfig, RootConfig
+from .const import DEFAULT_CONFIG_FILE
 
 # Define the YAML reader for parsing config files
 _yaml = YAML()
@@ -17,43 +17,56 @@ _yaml.sequence_indent = 4
 _yaml.sequence_dash_offset = 2
 
 
+# noinspection PyProtectedMember
 class ConfigManager:
-    def __init__(self) -> None:
-        """
-        Initialize the config manager, which is responsible for sorting out
-        which configurations apply at each level of the timelapse project
-        (global, date-specific, and group-specific).
+    """
+    The ConfigManager is responsible for managing the configuration tree and
+    serving the appropriate config record at each level of the project.
 
+    It keeps track of the central RootConfig as well as its children
+    (DateConfigs) and grandchildren (GroupConfigs).
+    """
+
+    def __init__(self, project: str | Path | None) -> None:
+        """
+        Initialize the config manager, which is responsible for managing the
+        configuration tree and serving the appropriate config record at each
+        level of the project.
+
+        :param project: The absolute path to the project directory. If this is
+         None, the environment variable `TLMERGE_PROJECT` is checked. If that's
+         not set, this will raise an error.
         :return: None
+        :raises ValueError: If `project` is invalid, or it's not set and can't
+         be determined from the environment variable.
         """
 
-        # Root config node
-        self._modifiable_root = GlobalConfig()
-        self._root_view = GlobalConfigView(self._modifiable_root)
+        # Root node
+        self._root: RootConfig = RootConfig(project)
 
         # Config records in this tree inherit from the view
-        self._tree: dict[tuple[str, Optional[str]], Config] = {}
-
-        # Same as the _tree but with views for each config
-        self._view_tree: dict[tuple[str, Optional[str]], ConfigView] = {}
+        self._tree: dict[tuple[str, Optional[str]],
+        DateConfig | GroupConfig] = {}
 
     @property
-    def modifiable_root(self) -> GlobalConfig:
-        return self._modifiable_root
+    def root(self) -> RootConfig:
+        return self._root
 
-    @property
-    def root(self) -> GlobalConfigView:
-        return self._root_view
-
-    def __getitem__(self, key) -> ConfigView:
+    def __getitem__(self,
+                    key: None | tuple[()] | str | tuple[str | None] | \
+                         tuple[str, str | None] | tuple[None, None]) -> \
+            RootConfig | DateConfig | GroupConfig:
         """
         Get a config view via indexing by specifying a date and group. If
-        both are omitted, this returns a view of the root/global config. For
-        date configs, the group index can be omitted.
+        both are omitted, this returns the root config. For date configs, the
+        group index can be omitted.
 
         :param key: Zero, one, or two strings. Either the last string or both
-        of them can be None.
-        :return: A view of the most specific Config record for this date/group.
+         of them can be None. Using an empty tuple, None, or a tuple containing
+         only None yields the root config.
+        :return: The most specific Config record for this date/group.
+        :raises TypeError: If the key type is invalid.
+        :raises KeyError: If given an empty string for the date or group name.
         """
 
         # Use the root config if the index is None, an empty tuple, (None),
@@ -65,7 +78,6 @@ class ConfigManager:
 
         # Validate key type, and separate into date and group
         if isinstance(key, str):
-            # Allow a single string
             dt, grp = key, None
         elif isinstance(key, tuple) and len(key) <= 2 and \
                 all(k is None or isinstance(k, str) for k in key):
@@ -76,8 +88,8 @@ class ConfigManager:
                 dt, grp = key[0], None
         else:
             # Reject everything else
-            raise KeyError('Expected (date, group) indices when getting '
-                           f'config record: got "{key}"')
+            raise TypeError('Expected (date, group) indices when getting '
+                            f'config record: got "{key}" ({type(key)})')
 
         # If either is blank, raise an error
         if (dt is not None and not dt.strip()) or \
@@ -86,142 +98,414 @@ class ConfigManager:
                            f"keys can't be blank, but got \"{key}\"")
 
         if dt is None:
-            raise ValueError(
-                f"Can't get config for group '{grp}' with no date. You must "
-                "specify a date if you specify a group"
-            )
+            raise TypeError('Expected (date, group) indices when getting '
+                            f'config record: got group "{grp}" but no date')
         elif grp is None:
-            return self._view_tree.get((dt, None), self.root)  # noqa
+            # (PyCharm thinks `dt` is None for some inexplicable reason)
+            # noinspection PyTypeChecker
+            return self._tree.get((dt, None), self.root)
         else:
             # Get the group config; if that's not found, get the date config;
             # if that's not found, get the root config
-            return self._view_tree.get(
+            return self._tree.get(
                 (dt, grp),
-                self._view_tree.get((dt, None), self.root)
+                self._tree.get((dt, None), self.root)
             )
 
-    def get_modifiable(self,
-                       date_str: str | None = None,
-                       group: str | None = None) -> Config:
+    def new_date(self, date_dir: str, **kwargs) -> DateConfig:
         """
-        Get a modifiable Config record for a particular date/group. If there
-        isn't a record for that date/group yet, it is created by cloning the
-        next Config record up the tree.
+        Create a new DateConfig based on the existing root that's only
+        applicable to the specified date directory.
 
-        :param date_str: The date.
-        :param group: The group within that date.
-        :return: The (possibly new) Config record.
+        :param date_dir: The name of the date directory to which the new config
+         record will apply. This is validated to make sure it adheres to the
+         date format according to the root config.
+        :param kwargs: Additional arguments to pass to the DateConfig
+         constructor to override particular configurations. This is a shortcut
+         to individually calling setters for those values later.
+        :return: The new DateConfig record.
+        :raises ValueError: If `date_dir` doesn't match the `date_format`
+         root configuration.
         """
 
-        # If date and group aren't specified, use the root
-        if date is None and group is None:
-            return self.modifiable_root
-
-        # Can't have a date without a group
-        if date is None:
+        # Make sure the date_dir name matches the date format
+        try:
+            datetime.strptime(date_dir, self._root.date_format())
+        except ValueError:
             raise ValueError(
-                f"Can't get config for group '{group}' with no date. You must "
-                "specify a date if you specify a group"
+                f"Invalid date directory \"{date_dir}\": format doesn't "
+                f"match date_format config \"{self._root.date_format()}\""
             )
 
-        # Get the config for the date (i.e. child node in tree)
-        if group is None:
-            if (date, None) in self._tree:
-                return self._tree[(date_str, None)]
+        # Create DateConfig child
+        cfg = self._root._make_child(date_dir, **kwargs)
+        self._tree[(date_dir, None)] = cfg
+        return cfg
+
+    def new_group(self,
+                  date_dir: str,
+                  group_dir: str,
+                  **kwargs) -> GroupConfig:
+        """
+        Create a new DateConfig based on the existing root that's only
+        applicable to the specified date directory.
+
+        As a side effect, this also creates (but does not return) a config
+        record for the date directory containing this group if it doesn't
+        already exist.
+
+        :param date_dir: The name of the date directory containing the group.
+        :param group_dir: The name of the group directory to which the new
+         config record will apply.
+        :param kwargs: Additional arguments to pass to the GroupConfig
+         constructor to override particular configurations. This is a shortcut
+         to individually calling setters for those values later.
+        :return: The new GroupConfig record.
+        :raises ValueError: If a new `DateConfig` must be created, and the
+          `date_dir` doesn't match the `date_format` root configuration,
+          causing `self.new_date()` to raise an error.
+        """
+
+        # Create a config for the date parent if it doesn't already exist
+        date_cfg: DateConfig | None = self._tree.get((date_dir, None))
+        if date_cfg is None:
+            date_cfg: DateConfig = self.new_date(date_dir)
+
+        # Create the config for the group
+        cfg = date_cfg._make_child(group_dir, **kwargs)
+        self._tree[(date_dir, group_dir)] = cfg
+        return cfg
+
+    def get(self,
+            date_dir: str | None = None,
+            group_dir: str | None = None, /) -> \
+            RootConfig | DateConfig | GroupConfig:
+        """
+        Get a config record specific to the given date and group. If such a
+        record does not already exist, it is created. In that respect, this is
+        different from indexing the `ConfigManager` with `__getitem__`, which
+        returns the most specific config for the specified date and group
+        without creating any new ones.
+
+        If both the `date_dir` and `group_dir` are `None`, this returns the
+        `RootConfig`. If only the `group_dir` is `None`, this returns a
+        `DateConfig`. And if neither are `None`, it returns a `GroupConfig`.
+
+        If the `group_dir` is given while `date_dir`, is `None`, this raises
+        an error.
+
+        :param date_dir: The name of the date directory. Defaults to None.
+        :param group_dir: The name of the group directory. Defaults to None.
+        :return: A config record specific to the given date and group.
+        :raises ValueError: If `group_dir` is given but not `date_dir`.
+        """
+
+        # If the date is omitted, the group must also be omitted
+        if date_dir is None:
+            if group_dir is None:
+                return self._root
             else:
-                # Clone the root for this date
-                return self._clone_config(self.modifiable_root,
-                                          date_str, None)
+                raise ValueError(
+                    "Can't get a config record for a specific group "
+                    f"(\"{group_dir}\" without specifying the date"
+                )
 
-        # Get the config for a particular group (i.e. grandchild node in tree)
-        if (date, group) in self._tree:
-            return self._tree[(date_str, group)]
-        elif (date, None) in self._tree:
-            # Clone the config for the date down to the group
-            # (i.e. clone the child node to the grandchild)
-            return self._clone_config(self._tree[(date_str, None)],
-                                      date_str, group)
+        # Get the requested DateConfig or GroupConfig.
+        # If it doesn't already exist, make it
+        config = self._tree.get((date_dir, group_dir))
+
+        if config is not None:
+            return config
+        elif group_dir is None:
+            return self.new_date(date_dir)
         else:
-            # Clone the base config to the date and then to the group
-            # (i.e. clone root node down to child and grandchild)
-            c = self._clone_config(self.modifiable_root, date_str, None)
-            return self._clone_config(c, date_str, group)
+            return self.new_group(date_dir, group_dir)
 
-    def _clone_config(self,
-                      config: Config,
-                      date_str: str,
-                      group: str | None) -> Config:
-        """
-        Clone the given config entry, saving it in the tree with the given date
-        and group key pair. An unmodifiable view of the new Config record is
-        also saved in the view tree.
-
-        This is private as it must never be called if there is already a config
-        record at the specified date/group index or (worse) if that record
-        has children.
-
-        :param config: The config to clone.
-        :param date_str: The date with which to associate with cloned record.
-        :param group: The group with which to associate the record (optional).
-        :return: The cloned Config record (not the view).
-        """
-
-        clone = config.clone()
-        self._tree[(date_str, group)] = clone
-        self._view_tree[(date_str, group)] = ConfigView(clone)
-        return clone
-
-    def update_root(self,
-                    project_path: Path | None = None,
+    def update_root(self, *,
                     file: Path | None = None,
-                    args: Namespace | None = None) -> bool:
+                    cli: Namespace | None = None) -> tuple[bool, bool]:
         """
         Update the root config based on a configuration file (and possibly the
-        command line arguments).
+        command line arguments). If neither a file nor command line arguments
+        are provided, nothing happens.
 
-        If the config file doesn't exist, only the command line arguments are
-        applied. If those aren't given either, nothing happens.
-
-        :param project_path: The path to the project directory. This may also
-         be derived from the command line arguments (which override this value).
-        :param file: The path to the config file, if there is one. Defaults to
+        :param file: The path to the root config file, if there is one. If this
+         file doesn't exist, it's considered None. Defaults to None.
+        :param cli: The command line arguments, if there are any. Defaults to
          None.
-        :param args: The command line arguments, if there are any. Defaults to
-         None.
-        :return: Whether a config file exists and was applied.
+        :return: Two booleans indicating respectively (1) whether a config file
+         exists and was applied and (2) whether command line arguments were
+         given and applied.
+        :raises ValueError: If the config file exists but points to a
+         directory instead of a file.
         """
 
-        # Set the project path if given
-        if project_path is not None:
-            self.modifiable_root.project = project_path
-
-        applied_config_file = False
+        used_file = used_cli = False
 
         # Process the config file only if it exists
         if file is not None and file.exists():
-            # Parse YAML
-            documents: tuple = _load_config_file(file)
+            if not file.is_file():
+                raise ValueError(f'The config file {file} exists but is not '
+                                 'a valid file. Is it a directory?')
 
-            # Validate each doc with Pydantic
-            for doc in documents:
-                GlobalConfigModel.model_validate(doc)
+            # Parse and apply the documents
+            for doc in _load_config_file(file):
+                self._apply_root_config_document(doc, cli=cli)
 
-            # Apply the documents
-            for doc in documents:
-                _apply_root_config(doc, file, self.modifiable_root, args)
+            used_file = True
 
-            applied_config_file = True
+        # Apply the command line arguments if given
+        if cli is not None:
+            self.apply_cli_args(cli)
+            used_cli = True
 
-        # Apply the command line arguments
-        if args is not None:
-            _apply_global_cli(args, self.modifiable_root)
+        # Return what was used
+        return used_file, used_cli
 
-        # Return whether a global config file was used
-        return applied_config_file
+    def apply_cli_args(self, args: Namespace) -> None:
+        """
+        Apply all the command line arguments to the root config record (and its
+        children, as that propagates automatically).
 
-    def load_all_config_files(self,
-                              project: Path,
-                              args: Namespace | None = None) -> int:
+        :param args: The parsed command line arguments.
+        :return: None
+        """
+
+        # Iterate over all the available command line arguments
+        for attr in dir(args):
+            # Ignore private attributes of the argparse Namespace
+            if attr.startswith('_'):
+                continue
+
+            if adder := getattr(self._root, 'add_' + attr, None):
+                # If there's an adder method, use it
+                adder(getattr(args, attr))
+            elif setter := getattr(self._root, 'set_' + attr, None):
+                # Otherwise, if there's a setter, use it
+                setter(getattr(args, attr))
+
+            # Ignore other attributes. Can't differentiate between
+            # invalid/errant CLI settings vs attributes of the Namespace that
+            # we don't care about. I.e., we can't raise a ValueError on unknown
+            # CLI settings without a bunch of false-positives. dir() is a rather
+            # clunky way to look for possible settings. Also, settings like
+            # `make_config` are intended for use by main() but not here.
+
+    def _apply_root_config_document(self,
+                                    document: dict[str, Any],
+                                    cli: Namespace | None = None) -> None:
+        """
+        Apply a single YAML document from a config file to the RootConfig
+        record `self._root`.
+
+        :param document: The parsed configuration dictionary to apply. All keys
+         are assumed to be lowercase.
+        :param cli: The parsed command line arguments, if there are any. This is
+         used for configurations like `date_format` that affect the way other
+         configurations (e.g. `exclude_dates`) are parsed. Defaults to None.
+        :return: None
+        :raises ValueError: If the document contains invalid keys or values.
+        """
+
+        overrides: list | None = None
+
+        # Apply date format first, as this affects the parsing of other config
+        # elements. Prefer the CLI if available
+        if cli is not None and hasattr(cli, 'date_format'):
+            self._root.set_date_format(cli.date_format)
+        elif v := document.get('date_format'):
+            self._root.set_date_format(v)
+
+        # Apply all configurations for which there are setters to the root
+        for key, value in document.items():
+            if key == 'date_format':
+                pass  # Already applied
+            elif key == 'overrides':
+                # Wait to apply any overrides last
+                overrides = value if isinstance(value, list) else [value]
+            elif setter := getattr(self._root, 'add_' + key, None):
+                # If there's an add_... method (e.g. for sets), use it
+                setter(value)
+            elif setter := getattr(self._root, 'set_' + key, None):
+                # If there's a setter, use it
+                setter(value)
+            else:
+                raise ValueError(
+                    f'Unknown configuration option "{key}" is '
+                    'not supported for the root configuration file'
+                )
+
+        # Apply overrides for sub-configs last
+        if overrides is not None:
+            for o in overrides:
+                self._apply_override(o)
+
+    def _apply_date_group_config_document(
+            self,
+            document: dict[str, Any],
+            config: DateConfig | GroupConfig) -> None:
+        """
+        Apply a single YAML document from a config file to either `DateConfigs`
+        or `GroupConfigs`.
+
+        :param document: The parsed configuration dictionary to apply. All keys
+         are assumed to be lowercase.
+        :param config: The config record to update with the configuration from
+         the document.
+        :return: None
+        :raises ValueError: If the document contains invalid keys or values.
+        """
+
+        # Initialize overrides to apply last. This is only used for DateConfigs
+        overrides: list | None = None
+
+        # Apply all configurations for which there are setters to the root
+        for key, value in document.items():
+            if key == 'overrides':
+                if isinstance(config, GroupConfig):
+                    raise ValueError(
+                        'Invalid configuration key "overrides" for a group '
+                        'configuration. Overrides are only supported at the '
+                        'root and date levels.'
+                    )
+                else:
+                    overrides = value if isinstance(value, list) else [value]
+            elif setter := getattr(self._root, 'add_' + key, None):
+                # If there's an add_... method (e.g. for sets), use it
+                setter(value)
+            elif setter := getattr(config, 'set_' + key):
+                # If there's a setter, use it
+                setter(value)
+            else:
+                raise ValueError(
+                    f'Unknown configuration option "{key}" is '
+                    f'not supported for {config.__class__.__name__}'
+                )
+
+        # Apply overrides for sub-configs last
+        if overrides is not None:
+            for o in overrides:
+                self._apply_override(o, config.date_dir())
+
+    def _get_override_date_group(self,
+                                 document: dict[str, Any],
+                                 get_date: bool) -> str | None:
+        """
+        This is a utility method specify for `ConfigManager._apply_override()`
+        for getting the `"date"` or `"group"` attribute from a parsed YAML
+        document. It accepts a document (normalized to a dictionary) and
+        extracts either the date or group directory name based on the
+        `get_date` parameter.
+
+        This has a few possibilities:
+
+        1. The expected key (`"date"` or `"group"`) is not present. This
+           returns `None`.
+        2. The key maps to `None` or a blank string. This returns None.
+        3. The key maps to a non-blank string. This returns that string.
+        4. `get_date=True`, and the `"date"` key maps to a `date` or
+           `datetime` object. This means that the YAML reader automatically
+           detected that a string was a date and parsed it as such. Nice, but
+           not really what we want. In this case, turn it back into a string
+           using `datetime.strftime()` with the format from
+           `self._root.date_format()`.
+        5. The key maps to something else unexpected. This raises an error.
+
+        :param document: A dictionary mapping strings to values.
+        :param get_date: Whether to get the date (True) or group (False) name.
+        :return: The date or group name, or None.
+        :raises ValueError: If the date or group value is unexpected.
+        """
+
+        value: Any = document.get('date' if get_date else 'group')
+
+        if value is None:
+            return None
+
+        # The value should be a string
+        if isinstance(value, str):
+            # An empty string is the same as None
+            if not value.strip():
+                return None
+            else:
+                return value
+
+        # It's not a string. Maybe it's a datetime?
+        if get_date and isinstance(value, (date, datetime)):
+            return value.strftime(self._root.date_format())
+
+        # Unexpected data format
+        raise ValueError(
+            f'Invalid override configuration. The '
+            f'"{'date' if get_date else 'group'}" must '
+            f'be a a string, not a "{value.__class__.__name__}"'
+        )
+
+    def _apply_override(self,
+                        document: dict[str, Any],
+                        date_context: str | None = None) -> None:
+        """
+        Apply some configuration override. This will likely create a new config
+        record for a date or group and apply the configuration there.
+
+        :param document: The parsed configuration dictionary to apply. All keys
+         are assumed to be lowercase.
+        :param date_context: If this override was in a date config file, this
+         is the date as a string, which is necessary context to identify the
+         group. On the other hand, if this override was in the root config file,
+         this is None.
+        :return: None
+        :raises ValueError: If the date/group values are missing or incorrect.
+        """
+
+        # Get date and group identifiers in the overrides
+        date_str: str | None = self._get_override_date_group(document, True)
+        group_str: str | None = self._get_override_date_group(document, False)
+
+        # Check the date
+        if date_context is None:
+            # If no date context is given, the date_str must be specified
+            if date_str is None:
+                g = '' if group_str is None else f' for group "{group_str}"'
+                raise ValueError(
+                    f'You must specify a date for the config override{g} '
+                    'in the root config file.'
+                )
+        elif date_str is not None and date_context != date_str:
+            # If both date_str and date_context are given, they must match
+            raise ValueError(
+                f'Unexpected date "{date_str}" specified in a configuration '
+                f'override within the "{date_context}" config file.'
+            )
+
+        # Check the group
+        if group_str is None:
+            if date_context is not None or date_str is None:
+                # If within a date context, you must specify a group
+                raise ValueError(
+                    'You must specify a group for the config override in '
+                    f'the "{date_context}" config file.'
+                )
+            elif 'group' in document:
+                # This isn't impossible to parse, but it's weird if the user
+                # gives a blank "group:" tag in the override
+                raise ValueError(
+                    'A config override in the root configuration file for '
+                    f'"{date_str}" has an unexpected blank "group" tag. '
+                    'Did you forget to specify a group?'
+                )
+
+        # Get the appropriate config record, creating one if it doesn't exist
+        config = self.get(date_str, group_str)
+
+        # Remove keys used for identifying the override
+        document.pop('date', None)
+        document.pop('group', None)
+
+        # Apply configuration
+        self._apply_date_group_config_document(document, config)
+
+    def load_all_config_files(self) -> int:
         """
         Load all the sub-config files in the project directory. This is every
         config file except for the global one, which should have already been
@@ -231,407 +515,169 @@ class ConfigManager:
         individual date or group. However, command line arguments always take
         precedence: wherever present, they override all config files.
 
-        :param project: The path to the project directory.
-        :param args: The parsed command line arguments, if applicable.
         :return: The number of separate config files that were loaded.
         """
 
         # Define the logger here, as it can't be used in earlier steps while
         # processing the global config (as the settings there affect the logger)
-        log = logging.getLogger(__name__)
+        log: Logger = logging.getLogger(__name__)
 
         # Count the number of config files
-        counter = 0
+        n = 0
 
         # Importing here to avoid circular import ¯\_(ツ)_/¯
         from tlmerge.scan import iter_all_dates, iter_all_groups
 
         # Scan each date directory
-        for date_dir in iter_all_dates():
-            found_any_files = False
-            file, n = _find_and_apply_config_file(
-                date_dir, self.modifiable_root, date_dir.name
-            )
-            if n > 0:
-                log.debug(
-                    f"Loaded config \".{os.sep}{file.relative_to(project)}\" "
-                    f"with {n} YAML document{'' if n == 1 else 's'}"
-                )
-                counter += n
-                found_any_files = True
+        for date_dir in iter_all_dates(self):
 
-            # Get the config instance for this date
-            cfg = CONFIG.get_modifiable(date_dir.name)
+            # Check for and apply a config file for the date
+            n += self._load_config_file(date_dir, log, True)
 
             # Scan each group directory within this date
-            for group_dir in iter_all_groups(date_dir):
-                file, n = _find_and_apply_config_file(
-                    group_dir, cfg, date_dir.name, group_dir.name
-                )
-                if n > 0:
-                    log.debug(f"Loaded config "
-                              f"\".{os.sep}{file.relative_to(project)}\" "
-                              f"with {n} YAML document{'' if n == 1 else 's'}")
-                    counter += n
-                    found_any_files = True
-
-            # If any Config records were updated, apply the command line args
-            if found_any_files and args is not None:
-                _apply_date_cli(args, cfg)
+            for group_dir in iter_all_groups(date_dir, self):
+                # Check for and apply a config file for the date
+                n += self._load_config_file(group_dir, log, False)
 
         # Return the total config file count
-        return counter
+        return n
+
+    def _load_config_file(self,
+                          directory: Path,
+                          log: Logger,
+                          is_date: bool) -> bool:
+        """
+        Given a directory, check to see if it contains a config file. If it
+        does, parse that file, and update the appropriate Config record.
+
+        :param directory: The directory to check.
+        :param log: The logging instance, used to issue debug messages if a
+         file is found and loaded.
+        :param is_date: Whether the given directory points to a date (True)
+         or group (False).
+        :return: True if and only if a configuration file exists and is loaded.
+        """
+
+        file = directory / DEFAULT_CONFIG_FILE
+
+        if not file.is_file():
+            return False
+
+        # Get the name of the date (and possibly group) directory
+        if is_date:
+            date_str, group_str = directory.name, None
+        else:
+            date_str, group_str = directory.parent.name, directory.name
+
+        # Load, parse, and apply the YAML document(s) in the file
+        documents = _load_config_file(file)
+        n = len(documents)
+
+        for doc in documents:
+            self._apply_date_group_config_document(
+                doc, self.get(date_str, group_str)
+            )
+
+        log.debug(
+            f"Loaded config "
+            f"\".{os.sep}{file.relative_to(self._root.project())}\" "
+            f"with {n} YAML document{'' if n == 1 else 's'}"
+        )
+
+        return True
 
 
-CONFIG: ConfigManager = ConfigManager()
-
-
-def _load_config_file(file: Path) -> tuple:
+def _load_config_file(file: Path) -> list[dict[str, Any]]:
     """
     Given the path to a YAML-formatted config file, load it as a tuple of one
     or more YAML documents. This handles and re-raises exceptions with an
     appropriate error message.
 
+    Each document comes in as a CommentedMap and is converted to a dict.
+    (A CommentedSeq will trigger an error). All keys are converted to
+    lowercase, and duplicate keys trigger an error. The keys of any nested
+    constructs are made lowercase and checked as well.
+
     :param file: The path to the config file.
-    :return: A tuple with one or more YAML documents.
+    :return: A list with one or more parsed YAML documents.
+    :raises ValueError: If there's any error loading and parsing the file.
     """
 
     try:
-        return tuple(_yaml.load_all(file))
+        docs = list(_yaml.load_all(file))
     except Exception as e:
         raise ValueError(f'Invalid/unparseable config file "{file}": '
                          f'{e.__class__.__name__}: {e}')
 
+    # Make sure there's at least one document
+    if len(docs) == 0:
+        raise ValueError(f'Invalid config file "{file}": '
+                         "Couldn't find any YAML documents. Is it empty?")
 
-def _find_and_apply_config_file(directory: Path,
-                                parent_config: Config | ConfigView,
-                                date_str: str,
-                                group_str: str | None = None) -> \
-        tuple[Path | None, int]:
+    # Normalize documents
+    docs: list[dict[str, Any]] = _normalize_yaml_construct(docs)
+
+    # Make sure each document is a dictionary
+    for doc in docs:
+        if not isinstance(doc, dict):
+            raise ValueError(
+                f'Got "{doc.__class__.__name__}" from "{file}": expected a '
+                'dict. Is your configuration file formatted incorrectly?'
+            )
+
+    return docs
+
+
+def _normalize_yaml_construct(construct: Any) -> Any:
     """
-    Given a directory, check to see if it contains a config file. If it does,
-    parse that file, and update the appropriate Config record.
+    Given some data from a YAML config file, normalize it. Make all the keys
+    in dictionaries/CommentedMaps lowercase, and prevent duplicate keys. This
+    also works recursively, normalizing nested constructs in dictionary keys
+    or iterables.
 
-    :param directory: The directory to check.
-    :param parent_config: The parent Config record.
-    :param date_str: The date string, for obtaining the new Config record.
-    :param group_str: The group string (if applicable). Defaults to None.
-    :return: The path to the config file that was checked and the number of
-     parsed documents. If the number of documents is 0, the file likely does
-     not exist.
-    """
+    If given any dict-like object, this returns a dict. If given any iterable,
+    this returns a list.
 
-    i = 0
-    file = directory / DEFAULT_CONFIG_FILE
-    if file.is_file():
-        # Parse the file
-        documents = _load_config_file(file)
-
-        # Load the documents
-        for doc in documents:
-            _apply_child_config(doc, parent_config, date_str, group_str)
-            i += 1
-
-    return file, i
-
-
-def _apply_root_config(document,
-                       document_path: Path,
-                       config: GlobalConfig,
-                       args: Namespace | None = None) -> None:
-    """
-    Apply a single YAML document with configuration information to the given
-    Config record.
-
-    :param document: The parsed YAML document to apply.
-    :param document_path: The path document file.
-    :param config: The Config record to modify.
-    :param args: The command line arguments. Defaults to None.
-    :return: None
+    :param construct: The construct to normalize.
+    :return: The normalized construct.
     """
 
-    if hasattr(args, 'date_format'):
-        config.date_format = args.date_format
-    elif 'date_format' in document:
-        # Note that this is ignored if the date_format is specified via the CLI
-        config.date_format = document['date_format']
+    # If it's a dictionary (including YAML CommentedMap), make keys lowercase,
+    # and normalize all the values. Also check for duplicate keys
+    if isinstance(construct, dict):
+        d = {}
 
-    # Update the date info. It's important that the date format was added first
-    # (and possibly overwritten by command line args)
-    if 'include_dates' in document:
-        config.include_dates = document['include_dates']
-    if 'exclude_dates' in document:
-        config.exclude_dates = document['exclude_dates']
+        for k, v in construct.items():
+            if not isinstance(k, str):
+                raise ValueError("Expect string key in YAML map, but got "
+                                 f"{type(k)}")
+            k = k.lower()
+            if k in d:
+                raise ValueError(
+                    f"Found duplicate key {k} in config file. Remember that "
+                    "configuration keys are case-insensitive."
+                )
+            d[k] = _normalize_yaml_construct(v)
 
-    # Update the group info
-    if 'include_groups' in document:
-        config.include_groups = document['include_groups']
-    if 'exclude_groups' in document:
-        config.exclude_groups = document['exclude_groups']
-    if 'group_ordering' in document:
-        config.group_ordering = document['group_ordering']
+        return d
 
-    # Update the camera config
-    _apply_camera_config(document, config)
+    # For lists, tuples, and sets, normalize each of their sub-elements, and
+    # convert all these collections to lists
+    if isinstance(construct, (list, tuple, set)):
+        return [_normalize_yaml_construct(e) for e in construct]
 
-    # Update the logging options
-    if 'log' in document:
-        if not document['log']:
-            config.log = None
-        else:
-            log_path = Path(document['log'])
-            if not log_path.is_absolute():
-                log_path = document_path.joinpath(log_path).resolve()
-            if log_path.is_dir():
-                raise ValueError(f"Invalid log file: \"{log_path}\" is "
-                                 f"a directory")
-            config.log = log_path
-
-    if 'verbose' in document:
-        config.verbose = document['verbose']
-    if 'quiet' in document:
-        config.quiet = document['quiet']
-    if 'silent' in document:
-        config.silent = document['silent']
-
-    # Execution
-    if 'workers' in document:
-        config.workers = document['workers']
-    if 'max_processing_errors' in document:
-        config.max_processing_errors = document['max_processing_errors']
-    if 'sample' in document:
-        config.sample = document['sample']
-
-    # Database
-    if 'database' in document:
-        db_path = Path(document['database'])
-        if not db_path.is_absolute():
-            db_path = document_path.joinpath(db_path).resolve()
-        if db_path.is_dir():
-            raise ValueError(f"Invalid database file: \"{db_path}\" "
-                             f"is a directory")
-        config.database = db_path
-
-    # Apply an overrides for child config records
-    if 'overrides' in document:
-        for override in document['overrides']:
-            _apply_child_config(override, config)
-
-    # Apply the command line arguments. These recursively propagate to
-    # children records, so no need to separately apply CLI args to the children
-    # created from overrides above
-    _apply_global_cli(args, config)
-
-
-def _apply_child_config(document,
-                        parent_config: Config | ConfigView,
-                        date_str: str | None = None,
-                        group_str: str | None = None) -> None:
-    """
-    Update a config record for a date or group config file. This also applies
-    to overrides in a parent config file.
-
-    :param document: The parsed YAML document to apply.
-    :param parent_config: The parent Config record, used exclusively for
-    getting the date format (if necessary).
-    :param date_str: The date (as a string) if known. If this is omitted (e.g.
-     for overrides) the 'date' attribute of the document is used.
-    :param group_str: The group if known. If omitted, the 'group' attribute of
-     the document is used if available.
-    :return: None
-    """
-
-    # Get the appropriate config record, creating one if it doesn't exist
-    d = None
-    config: Config
-    if date_str is not None:
-        if group_str is not None:
-            config = CONFIG.get_modifiable(date_str, group_str)
-        else:
-            config = CONFIG.get_modifiable(date_str,
-                                           document.get('group', None))
-    elif 'date' in document:
-        d = document['date']
-        if isinstance(d, date):
-            d = d.strftime(parent_config.date_format)
-        config: Config = CONFIG.get_modifiable(d, document.get('group', None))
-    else:
-        raise ValueError(f"Cannot apply document to child config: date_str "
-                         f"is None and document is missing 'date' attribute.")
-
-    # Update the group info. If this is a group override, this'll simply be
-    # skipped as these options only exist for date overrides
-    if 'include_groups' in document:
-        config.include_groups = document['include_groups']
-    if 'exclude_groups' in document:
-        config.exclude_groups = document['exclude_groups']
-    if 'group_ordering' in document:
-        config.group_ordering = document['group_ordering']
-
-    # Update the camera config
-    _apply_camera_config(document, config)
-
-    # Add any group overrides. This can only happen if this override is for a
-    # date, in which case `d` was set to document['date']
-    if 'overrides' in document:
-        assert d is not None
-        for override in document['overrides']:
-            _apply_child_config(override, parent_config, date_str=d)
-
-
-def _apply_camera_config(document, config: Config) -> None:
-    """
-    Apply the basic camera configurations from a document to the given Config
-    record.
-
-    :param document: The parsed YAML document to apply.
-    :param config: The Config record to modify.
-    :return: None
-    """
-
-    if 'white_balance' in document:
-        config.white_balance = document['white_balance']
-    if 'chromatic_aberration' in document:
-        config.chromatic_aberration = document['chromatic_aberration']
-    if 'median_filter' in document:
-        config.median_filter = document['median_filter']
-    if 'dark_frame' in document:
-        config.dark_frame = document['dark_frame']
-
-
-def _apply_base_cli(args: Namespace, config: Config) -> None:
-    """
-    Apply the basic command line arguments to the given Config record. This
-    covers all the arguments for a group-level record.
-
-    :param args: The command line arguments.
-    :param config: The Config record to modify.
-    :return: None
-    """
-
-    # Camera settings
-    if hasattr(args, 'white_balance'):
-        config.white_balance = {
-            'red': args.white_balance[0],
-            'green_1': args.white_balance[1],
-            'blue': args.white_balance[2],
-            'green_2': args.white_balance[3]
-        }
-    if hasattr(args, 'chromatic_aberration'):
-        config.chromatic_aberration = {
-            'red': args.chromatic_aberration[0],
-            'blue': args.chromatic_aberration[1]
-        }
-    if hasattr(args, 'median_filter'):
-        config.median_filter = args.median_filter
-    if hasattr(args, 'dark_frame'):
-        config.dark_frame = args.dark_frame
-
-
-def _apply_date_cli(args: Namespace, config: Config) -> None:
-    """
-    Apply the date-level command line arguments pertaining to the given Config
-    record. This also calls _apply_base_cli() for group-level arguments.
-
-    :param args: The command line arguments.
-    :param config: The Config record to modify.
-    :return: None
-    """
-
-    _apply_base_cli(args, config)
-
-    # Groups
-    if hasattr(args, 'group_ordering'):
-        config.group_ordering = args.group_ordering
-    if hasattr(args, 'include_groups'):
-        config.include_groups = args.include_groups
-    if hasattr(args, 'exclude_groups'):
-        config.exclude_groups = args.exclude_groups
-
-
-def _apply_global_cli(args: Namespace, config: GlobalConfig) -> None:
-    """
-    Apply all the command line arguments to the given global config record
-    (and its children, as that propagates automatically). This calls
-    _apply_date_cli() for date- and group-level arguments.
-
-    :param args: The parsed command line arguments.
-    :param config: The Config record to modify.
-    :return: None
-    """
-
-    _apply_date_cli(args, config)
-
-    # Project path
-    if hasattr(args, 'project'):
-        config.project = args.project
-
-    # Dates
-    if hasattr(args, 'date_format'):
-        config.date_format = args.date_format
-    if hasattr(args, 'include_dates'):
-        config.include_dates = args.include_dates
-    if hasattr(args, 'exclude_dates'):
-        config.exclude_dates = args.exclude_dates
-
-    # Logging
-    if hasattr(args, 'log'):
-        config.log = args.log
-    if hasattr(args, 'verbose'):
-        config.verbose = args.verbose
-    if hasattr(args, 'quiet'):
-        config.quiet = args.quiet
-    if hasattr(args, 'silent'):
-        config.silent = args.silent
-
-    # Execution
-    if hasattr(args, 'workers'):
-        config.workers = args.workers
-    if hasattr(args, 'max_processing_errors'):
-        config.max_processing_errors = args.max_processing_errors
-    if hasattr(args, 'sample'):
-        config.sample = args.sample
-
-    # Database
-    if hasattr(args, 'database'):
-        config.database = args.database
+    # Otherwise return unchanged
+    return construct
 
 
 def write_default_config(file: Path) -> None:
     """
-    Save the default (global) config settings to the given file.
+    Save the default (root/global) config settings to the given file.
 
     :param file: The output file path.
     :return: None
     """
 
-    _yaml.dump({
-        'log': 'tlmerge.log',
-        'verbose': False,
-        'quiet': False,
-        'silent': False,
-        'workers': 20,
-        'max_processing_errors': 5,
-        'sample': None,
-        'database': DEFAULT_DATABASE_FILE,
-        'include_dates': [],
-        'exclude_dates': [],
-        'include_groups': [],
-        'exclude_groups': [],
-        'group_ordering': 'abc',
-        'date_format': 'yyyy-mm-dd',
-        'white_balance': {
-            'red': 1.0,
-            'green_1': 1.0,
-            'blue': 1.0,
-            'green_2': 1.0
-        },
-        'chromatic_aberration': {
-            'red': 1.0,
-            'blue': 1.0
-        },
-        'median_filter': 1,
-        'dark_frame': None,
-        'exclude_photos': [],
-        'overrides': []
-    }, file)
+    _yaml.dump(RootConfig(
+        os.getcwd()  # Just a dummy value. Can be anything PathLike
+    ).dump(), file)
