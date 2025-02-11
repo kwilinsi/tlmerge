@@ -320,17 +320,49 @@ def coerce_none(v: Any) -> Any:
     Given any value, if it's the boolean False or some falsy string, return
     None. Otherwise, return the value unchanged (which may still be None).
 
-    This recognizes the following falsy, case-insensitive strings:
-    - `''` (empty string), `'o'`, `'na'`, `'no'`, `'n/a'`, `'off'`,
-    and `'false'`.
+    This recognizes the following falsy, case-insensitive strings, ignoring
+    whitespace: `''` (empty string), `'o'`, `'na'`, `'no'`, `'n/a'`, `'off'`,
+    `'false'`, and `'disable'`.
 
     :param v: The input value.
     :return: Either None or the input unmodified.
     """
 
-    if v is False or (isinstance(v, str) and v.lower() in
-                      ('', '0', 'na', 'no', 'n/a', 'off', 'false')):
+    if v is False or (isinstance(v, str) and v.lower().strip() in
+                      ('', '0', 'na', 'no', 'n/a', 'off', 'false', 'disable')):
         return None
+    else:
+        return v
+
+
+def blank_str_none(v: Any) -> Any:
+    """
+    Given some value, if it's a blank string (i.e. empty or only whitespace),
+    return None. Otherwise, return it unmodified.
+
+    :param v: The value, which may be anything.
+    :return: The input value unmodified, unless it's a blank string, in which
+     case None.
+    """
+
+    if isinstance(v, str) and len(v.strip()) == 0:
+        return None
+
+    return v
+
+
+def str_lower_trim(v: Any) -> Any:
+    """
+    Given some value, if it's a string, return it converted to lowercase with
+    leading/trailing whitespace trimmed. Otherwise, return the input unmodified.
+
+    :param v: The value, which may be anything.
+    :return: The input value unchanged, unless it was a string, in which case
+     this will be lowercase and have leading/trailing whitespace trimmed.
+    """
+
+    if isinstance(v, str):
+        return v.lower().strip()
     else:
         return v
 
@@ -588,6 +620,8 @@ class BaseConfig(ABC):
                 Annotated[float, Field(ge=0)]] |
                 Literal['auto', 'camera', 'default'] |
                 WhiteBalanceModel,
+                BeforeValidator(str_lower_trim),
+                BeforeValidator(blank_str_none),
                 BeforeValidator(coerce_float_tuple),
                 AfterValidator(WhiteBalanceModel.to_tuple),
                 AfterValidator(infer_white_balance_green)
@@ -627,6 +661,8 @@ class BaseConfig(ABC):
                 tuple[Annotated[float, Field(ge=0)],
                 Annotated[float, Field(ge=0)]] | \
                 ChromaticAberrationModel,
+                BeforeValidator(str_lower_trim),
+                BeforeValidator(blank_str_none),
                 BeforeValidator(coerce_float_tuple),
                 AfterValidator(ChromaticAberrationModel.to_tuple)
             ] = (1, 1), /) -> Self:
@@ -799,7 +835,10 @@ class DateRootConfig(BaseConfig, ABC):
     @validate_call(config=STRING_PYDANTIC_CONFIG)
     def set_group_ordering(
             self,
-            gp: Literal['abc', 'num', 'natural'] = 'abc', /) -> Self:
+            gp: Annotated[Literal['abc', 'num', 'natural'],
+            BeforeValidator(str_lower_trim),
+            BeforeValidator(blank_str_none)] = 'abc',
+            /) -> Self:
 
         self._group_ordering = gp
         for child in self._children:
@@ -901,7 +940,7 @@ class RootConfig(DateRootConfig):
     config children, which themselves contain group configs.
     """
 
-    def __init__(self, project: str | Path | None, **kwargs) -> None:
+    def __init__(self, project: PathLike | str | None, **kwargs) -> None:
         """
         Initialize the root configuration instance in the config tree.
 
@@ -1025,6 +1064,7 @@ class RootConfig(DateRootConfig):
     def set_project(
             self,
             p: Annotated[str | PathLike,
+            BeforeValidator(blank_str_none),
             AfterValidator(path_validator(
                 'project', is_file=False, must_exist=True
             ))]
@@ -1043,6 +1083,7 @@ class RootConfig(DateRootConfig):
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
     def set_database(self,
                      d: Annotated[os.PathLike | str,
+                     BeforeValidator(blank_str_none),
                      AfterValidator(path_validator('database'))
                      ] = DEFAULT_DATABASE_FILE, /) -> Self:
         self._database: Path = d  # noqa
@@ -1068,6 +1109,7 @@ class RootConfig(DateRootConfig):
                 BeforeValidator(coerce_none),
                 AfterValidator(path_validator('log'))
                 ] = DEFAULT_LOG_FILE, /) -> Self:
+
         self._log: Path | None = l  # noqa
         for child in self._children:
             if isinstance(child, RootConfig):
@@ -1081,8 +1123,11 @@ class RootConfig(DateRootConfig):
     @validate_call(config=STRING_PYDANTIC_CONFIG)
     def set_log_level(
             self,
-            l: LogLevel | Literal['verbose'] | Literal['default'] | \
-               Literal['quiet'] | Literal['silent'] | None = None, /) -> Self:
+            l: Annotated[LogLevel | Literal['verbose'] | Literal['default'] | \
+                         Literal['quiet'] | Literal['silent'] | None,
+            BeforeValidator(str_lower_trim),
+            BeforeValidator(blank_str_none)] = None, /) -> Self:
+
         if l is None:
             self._log_level = LogLevel.DEFAULT
         elif isinstance(l, LogLevel):
@@ -1103,6 +1148,8 @@ class RootConfig(DateRootConfig):
     def set_verbose(self, v: bool = False, /) -> Self:
         if v:
             self._log_level = LogLevel.VERBOSE
+        elif self._log_level == LogLevel.VERBOSE:
+            self._log_level = LogLevel.DEFAULT
 
         for child in self._children:
             if isinstance(child, RootConfig):
@@ -1117,6 +1164,8 @@ class RootConfig(DateRootConfig):
     def set_quiet(self, q: bool = False, /) -> Self:
         if q:
             self._log_level = LogLevel.QUIET
+        elif self._log_level == LogLevel.QUIET:
+            self._log_level = LogLevel.DEFAULT
 
         for child in self._children:
             if isinstance(child, RootConfig):
@@ -1131,6 +1180,8 @@ class RootConfig(DateRootConfig):
     def set_silent(self, s: bool = False, /) -> Self:
         if s:
             self._log_level = LogLevel.SILENT
+        elif self._log_level == LogLevel.SILENT:
+            self._log_level = LogLevel.DEFAULT
 
         for child in self._children:
             if isinstance(child, RootConfig):
@@ -1142,7 +1193,8 @@ class RootConfig(DateRootConfig):
         return self._log_level == LogLevel.SILENT
 
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
-    def set_workers(self, w: int = 20, /) -> Self:
+    def set_workers(self, w: Annotated[int, Field(ge=1)] = 20,
+                    /) -> Self:
 
         self._workers = w
         for child in self._children:
@@ -1155,7 +1207,8 @@ class RootConfig(DateRootConfig):
         return self._workers
 
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
-    def set_max_processing_errors(self, mpe: int = 5, /) -> Self:
+    def set_max_processing_errors(self, mpe: Annotated[int, Field(ge=1)] = 5,
+                                  /) -> Self:
 
         self._max_processing_errors = mpe
         for child in self._children:
@@ -1177,7 +1230,7 @@ class RootConfig(DateRootConfig):
 
         return self
 
-    def sample(self) -> str:
+    def sample(self) -> str | None:
         return self._sample
 
     def sample_details(self) -> tuple[bool, bool, int]:
