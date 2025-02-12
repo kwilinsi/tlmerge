@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 from tlmerge.conf import buffer_console_log, ConfigManager, RootConfig
 from tlmerge.db import DB, Photo
 from tlmerge.scan import enqueue_thread
+from tlmerge.utils import WorkerPool, WorkerPoolExceptionGroup
 from .exif import ExifWorker
 from .metadata import PhotoMetadata
 from .metrics import PreprocessingMetrics
-from .worker_pool import WorkerPool, WorkerPoolExceptionGroup
 
 _log = logging.getLogger(__name__)
 
