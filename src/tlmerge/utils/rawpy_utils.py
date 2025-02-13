@@ -29,5 +29,6 @@ def postprocess(photo: RawPy, config: BaseConfig) -> np.ndarray:
         use_camera_wb=cam_wb,
         use_auto_wb=auto_wb,
         user_wb=user_wb,
+        user_flip=config.flip_rotate().value,
         chromatic_aberration=config.chromatic_aberration(),
     )

@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import sys
 
+from .config_structs import FlipRotate, ThumbLocation
 from .const import DEFAULT_CONFIG_FILE, DEFAULT_DATABASE_FILE, DEFAULT_LOG_FILE
-from .config import ThumbLocation
 
 
 def _build_parser() -> ArgumentParser:
@@ -245,8 +245,20 @@ def _build_parser() -> ArgumentParser:
     parser.add_argument(
         '--dark_frame',
         metavar='FILE',
+        type=str,
         default=SUPPRESS,
         help="An optional dark frame to subtract from raw images."
+    )
+
+    parser.add_argument(
+        '--flip_rotate',
+        metavar='FLIP/ROT',
+        choices=[fr.name.lower() for fr in FlipRotate] +
+                [str(i) for i in list(range(-1, 8)) + [90, 180, 270]],
+        default=SUPPRESS,
+        help="Flip or rotate raw images when postprocessing them. Use DEFAULT "
+             "to respect rotation information in the raw file and NONE to "
+             "disable all rotation."
     )
 
     #################### THUMBNAILS ####################
@@ -255,7 +267,8 @@ def _build_parser() -> ArgumentParser:
     parser.add_argument(
         '--thumbnail_location',
         metavar='LOCATION',
-        choices=[loc.name.lower() for loc in ThumbLocation],
+        choices=[loc.name.lower() for loc in ThumbLocation] +
+                [str(i) for i in range(4)],
         default=SUPPRESS,
         help="The location in which to store thumbnail previews of photos. "
              "If using \"custom\", you must specify a path via "

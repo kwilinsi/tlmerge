@@ -17,8 +17,8 @@ from pydantic import (AfterValidator, BeforeValidator, ConfigDict,
 
 from .const import ENV_VAR_PREFIX, DEFAULT_DATABASE_FILE, DEFAULT_LOG_FILE
 from .log import LogLevel
-from .config_structs import (ChromaticAberrationModel, ThumbLocation,
-                             WhiteBalanceModel, WhiteBalanceType)
+from .config_structs import (ChromaticAberrationModel, FlipRotate,
+                             ThumbLocation, WhiteBalanceModel, WhiteBalanceType)
 
 _log = logging.getLogger(__name__)
 
@@ -334,6 +334,7 @@ class BaseConfig(ABC):
         self._chromatic_aberration: tuple[float, float]
         self._median_filter: int
         self._dark_frame: str | None
+        self._flip_rotate: FlipRotate
         self._exclude_photos: set[str]
         self._include_photos: set[str]
 
@@ -346,8 +347,8 @@ class BaseConfig(ABC):
 
         # Initialize config values
         for attr in ('white_balance', 'chromatic_aberration', 'median_filter',
-                     'dark_frame', 'exclude_photos', 'include_photos',
-                     'thumbnail_location', 'thumbnail_path',
+                     'dark_frame', 'flip_rotate', 'exclude_photos',
+                     'include_photos', 'thumbnail_location', 'thumbnail_path',
                      'use_embedded_thumbnail', 'thumbnail_resize_factor',
                      'thumbnail_quality'):
             self._init_value(attr, kwargs)
@@ -651,6 +652,33 @@ class BaseConfig(ABC):
 
     def dark_frame(self) -> str:
         return self._dark_frame
+
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_flip_rotate(
+            self,
+            fr: Annotated[FlipRotate | Literal['90'] | Literal['180'] |
+                          Literal['270'],
+            BeforeValidator(str_lower_trim),
+            BeforeValidator(blank_str_none)] = FlipRotate.DEFAULT,
+            /) -> Self:
+
+        # Convert degree amounts to rotation
+        if fr == '90':
+            fr = FlipRotate.ROTATE_CW
+        elif fr == '180':
+            fr = FlipRotate.HALF_ROTATION
+        elif fr == '270':
+            fr = FlipRotate.ROTATE_CCW
+
+        self._flip_rotate = fr
+        for child in self._children:
+            child.set_flip_rotate.raw_function(child, fr)
+
+        return self
+
+    def flip_rotate(self) -> FlipRotate:
+        # (PyCharm dumb and thinks _flip_rotate could be 90, 180, or 270)
+        return self._flip_rotate  # noqa
 
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
     def set_exclude_photos(self, ep: Annotated[

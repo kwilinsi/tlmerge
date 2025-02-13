@@ -85,3 +85,39 @@ class ThumbLocation(Enum):
     DATE = 1
     GROUP = 2
     CUSTOM = 3
+
+
+class FlipRotate(Enum):
+    """
+    These photo flips and rotations correspond to RawPy's `"user_flip"`
+    parameter, which can flip and rotate images when postprocessing them.
+    """
+
+    # If the photo has rotation/flip data, use it. Otherwise, this usually
+    # means no rotation or flipping
+    DEFAULT = None
+
+    # Specifically don't do any rotation or flipping. Ignore any rotation data
+    # baked into the raw photo by the camera
+    NONE = 0
+
+    # Simple horizontal mirror
+    HORIZONTAL_FLIP = 1
+
+    # Simple vertical mirror
+    VERTICAL_FLIP = 2
+
+    # 180 degree rotation
+    HALF_ROTATION = 3
+
+    # This could also be ROTATE_CCW_VERTICAL_FLIP. My selection is arbitrary
+    ROTATE_CW_HORIZONTAL_FLIP = 4
+
+    # 270 degree rotation
+    ROTATE_CCW = 5
+
+    # 90 degree rotation
+    ROTATE_CW = 6
+
+    # This could also be ROTATE_CW_VERTICAL_FLIP. My selection is arbitrary
+    ROTATE_CCW_HORIZONTAL_FLIP = 7
