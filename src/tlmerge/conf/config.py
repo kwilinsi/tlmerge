@@ -4,11 +4,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from copy import copy
 import csv
+from enum import Enum
 import inspect
 from io import StringIO
 import logging
 import os
-from os import PathLike
 from pathlib import Path
 import re
 from typing import Annotated, Any, Literal, Self, TypeAlias
@@ -91,6 +91,27 @@ class ChromaticAberrationModel(BaseModel):
             return data.red, data.blue
 
         return data
+
+
+class ThumbLocation(Enum):
+    """
+    These are the possible settings for where thumbnails can be stored.
+    For each option except CUSTOM, thumbnails are stored in some folder (by
+    default "thumb") at the specified location.
+
+    Consider the raw picture "2000-01-01/a/0001.dng". A thumbnail could be
+    stored in any of these locations:
+
+    - ROOT: `<PROJECT_ROOT>/thumb/2000-01-01/a/0001.jpg`
+    - DATE: `<PROJECT_ROOT>/2000-01-01/thumb/a/0001.jpg`
+    - GROUP: `<PROJECT_ROOT>/2000-01-01/a/thumb/0001.jpg`
+    - CUSTOM: `<SOME_CUSTOM_PATH>/2000-01-01/a/0001.jpg`
+    """
+
+    ROOT = 0
+    DATE = 1
+    GROUP = 2
+    CUSTOM = 3
 
 
 def coerce_float_tuple(raw: Any) -> Any:
@@ -242,12 +263,12 @@ def path_validator(name: str,
                    is_file: bool = True,
                    must_exist: bool = False,
                    relative_to: Path = Path(os.getcwd())) -> \
-        Callable[[PathLike | str | None], Path | None]:
+        Callable[[os.PathLike | str | None], Path | None]:
     """
     Get a function that can be used to validate a path. The function accepts
     either a PathLike object or a string, coerces it into a `pathlib.Path`,
-    and validates it. It ensures that the path is absolute, that it does (or
-    can) point to a file or directory, and optional that it's absolute.
+    and validates it. It ensures that the path does (or can) point to a file
+    or directory, and optionally that it's absolute.
 
     The validator function raises a `ValueError` if the path is not valid.
 
@@ -267,7 +288,7 @@ def path_validator(name: str,
     """
 
     # Define the validator function
-    def validate(path: PathLike | str | None) -> Path | None:
+    def validate(path: os.PathLike | str | None) -> Path | None:
         # Skip validation on None
         if path is None:
             return None
@@ -396,9 +417,19 @@ class BaseConfig(ABC):
         self._exclude_photos: set[str]
         self._include_photos: set[str]
 
+        # Thumbnail extraction
+        self._thumbnail_location: ThumbLocation
+        self._thumbnail_path: Path
+        self._use_embedded_thumbnail: bool
+        self._thumbnail_resize_factor: float
+        self._thumbnail_quality: int
+
         # Initialize config values
         for attr in ('white_balance', 'chromatic_aberration', 'median_filter',
-                     'dark_frame', 'exclude_photos', 'include_photos'):
+                     'dark_frame', 'exclude_photos', 'include_photos',
+                     'thumbnail_location', 'thumbnail_path',
+                     'use_embedded_thumbnail', 'thumbnail_resize_factor',
+                     'thumbnail_quality'):
             self._init_value(attr, kwargs)
 
     def _init_value(self,
@@ -782,6 +813,105 @@ class BaseConfig(ABC):
 
         return copy(self._include_photos)
 
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_thumbnail_location(
+            self,
+            l: Annotated[ThumbLocation | Literal['root'] | Literal['project'] |
+                         Literal['date'] | Literal['group'] |
+                         Literal['custom'] | Literal['other'],
+            BeforeValidator(str_lower_trim),
+            BeforeValidator(blank_str_none)] = ThumbLocation.ROOT,
+            /) -> Self:
+
+        if isinstance(l, ThumbLocation):
+            self._thumbnail_location = l
+        elif l == 'project':
+            self._thumbnail_location = l = ThumbLocation.ROOT
+        elif l == 'other':
+            self._thumbnail_location = l = ThumbLocation.CUSTOM
+        else:
+            self._thumbnail_location = l = ThumbLocation[l.upper()]
+
+        for child in self._children:
+            child.set_thumbnail_location.raw_function(child, l)
+
+        return self
+
+    def thumbnail_location(self) -> ThumbLocation:
+        return self._thumbnail_location
+
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_thumbnail_path(
+            self,
+            p: Annotated[os.PathLike | str,
+            BeforeValidator(blank_str_none)] = 'thumb',
+            /) -> Self:
+
+        if not isinstance(p, Path):
+            p = Path(p)
+
+        # If using a custom path (which must be absolute) and the given path
+        # is not absolute, resolve it relative to the current working directory
+        if self.thumbnail_location() == ThumbLocation.CUSTOM and \
+                not p.is_absolute():
+            p = (Path(os.getcwd()) / p).resolve()
+
+        self._thumbnail_path = p
+
+        for child in self._children:
+            child.set_thumbnail_location.raw_function(child, p)
+
+        return self
+
+    def thumbnail_path(self) -> Path:
+        return self._thumbnail_path
+
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_use_embedded_thumbnail(
+            self,
+            l: Annotated[bool | Literal['true'] | Literal['false'],
+            BeforeValidator(str_lower_trim)] = True,
+            /) -> Self:
+
+        self._use_embedded_thumbnail: bool = l is True or l == 'true'
+        for child in self._children:
+            child.set_use_embedded_thumbnail.raw_function(child, l)
+
+        return self
+
+    def use_embedded_thumbnail(self) -> bool:
+        return self._use_embedded_thumbnail
+
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_thumbnail_resize_factor(
+            self,
+            f: Annotated[float, Field(gt=0, le=1)] = 1,
+            /) -> Self:
+
+        self._thumbnail_resize_factor: float = f
+        for child in self._children:
+            child.set_thumbnail_resize_factor.raw_function(child, f)
+
+        return self
+
+    def thumbnail_resize_factor(self) -> float:
+        return self._thumbnail_resize_factor
+
+    @validate_call(config=MAIN_PYDANTIC_CONFIG)
+    def set_thumbnail_quality(
+            self,
+            q: Annotated[int, Field(ge=0, le=100)] = 75,
+            /) -> Self:
+
+        self._thumbnail_quality: int = q
+        for child in self._children:
+            child.set_thumbnail_quality.raw_function(child, q)
+
+        return self
+
+    def thumbnail_quality(self) -> int:
+        return self._thumbnail_quality
+
 
 # noinspection PyAttributeOutsideInit
 class DateRootConfig(BaseConfig, ABC):
@@ -940,7 +1070,7 @@ class RootConfig(DateRootConfig):
     config children, which themselves contain group configs.
     """
 
-    def __init__(self, project: PathLike | str | None, **kwargs) -> None:
+    def __init__(self, project: os.PathLike | str | None, **kwargs) -> None:
         """
         Initialize the root configuration instance in the config tree.
 
@@ -1032,7 +1162,7 @@ class RootConfig(DateRootConfig):
         # All paths are in scope for the root
         return super().trunc_path(path, level=level, file=file)
 
-    def rel_path(self, path: PathLike | str) -> Path:
+    def rel_path(self, path: os.PathLike | str) -> Path:
         """
         Return the given path object relative to the global config project
         directory.
@@ -1063,7 +1193,7 @@ class RootConfig(DateRootConfig):
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
     def set_project(
             self,
-            p: Annotated[str | PathLike,
+            p: Annotated[str | os.PathLike,
             BeforeValidator(blank_str_none),
             AfterValidator(path_validator(
                 'project', is_file=False, must_exist=True
@@ -1126,7 +1256,7 @@ class RootConfig(DateRootConfig):
             l: Annotated[LogLevel | Literal['verbose'] | Literal['default'] | \
                          Literal['quiet'] | Literal['silent'] | None,
             BeforeValidator(str_lower_trim),
-            BeforeValidator(blank_str_none)] = None, /) -> Self:
+            BeforeValidator(blank_str_none)] = LogLevel.DEFAULT, /) -> Self:
 
         if l is None:
             self._log_level = LogLevel.DEFAULT
@@ -1536,3 +1666,30 @@ class GroupConfig(BaseConfig):
         """
 
         return self._group_dir
+
+    def get_full_thumbnail_path(self,
+                                project: Path,
+                                date_dir: str) -> Path:
+        """
+        Get the path to the directory in which to put thumbnails for photos
+        from this group. The path is not validated and may not exist.
+
+        :param project: The path to the project directory, used to get an
+         absolute path unless the thumbnail location is `ThumbLocation.CUSTOM`.
+        :param date_dir: The name of the date directory to which this group
+         belongs.
+        :return: A complete absolute path to the thumbnail directory.
+        """
+
+        loc, path = self.thumbnail_location(), self.thumbnail_path()
+
+        if loc == ThumbLocation.ROOT:
+            return project / path / date_dir / self.group_dir()
+        elif loc == ThumbLocation.DATE:
+            return project / date_dir / path / self.group_dir()
+        elif loc == ThumbLocation.GROUP:
+            return project / date_dir / self.group_dir() / path
+        elif loc == ThumbLocation.CUSTOM:
+            return path / date_dir / self.group_dir()
+        else:
+            raise ValueError(f'Unknown thumbnail location value "{loc}"')

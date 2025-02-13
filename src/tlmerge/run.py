@@ -3,6 +3,7 @@ from typing import Literal
 from .conf import ConfigManager
 from .scan import run_scanner
 from .preprocess import Preprocessor
+from .thumb import generate_thumbnails
 
 
 def run(mode: Literal['scan', 'preprocess'],
@@ -19,5 +20,7 @@ def run(mode: Literal['scan', 'preprocess'],
         run_scanner(config)
     elif mode == 'preprocess':
         Preprocessor(config).run()
+    elif mode == 'thumb':
+        generate_thumbnails(config)
     else:
         raise ValueError(f"Invalid execution mode '{mode}'")

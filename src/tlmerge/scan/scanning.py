@@ -65,7 +65,8 @@ def iter_photos(metrics: ScanMetrics,
      is logged. Defaults to None.
     :param validate: Whether to validate each file to ensure that it can be
      read by RawPy/LibRaw. Defaults to False.
-    :return: A generator yielding the path to every photo in the project.
+    :return: A generator yielding the path to every photo in the project (or,
+     if using a sample, only a subset of the photos).
     """
 
     root = config.root

@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from .const import DEFAULT_CONFIG_FILE, DEFAULT_DATABASE_FILE, DEFAULT_LOG_FILE
+from .config import ThumbLocation
 
 
 def _build_parser() -> ArgumentParser:
@@ -22,7 +23,7 @@ def _build_parser() -> ArgumentParser:
     # The running mode
     parser.add_argument(
         'mode',
-        choices=['scan', 'preprocess'],
+        choices=['scan', 'preprocess', 'thumb'],
         help='Select an execution mode to process the timelapse images.'
     )
 
@@ -246,6 +247,59 @@ def _build_parser() -> ArgumentParser:
         metavar='FILE',
         default=SUPPRESS,
         help="An optional dark frame to subtract from raw images."
+    )
+
+    #################### THUMBNAILS ####################
+
+    # The place to store thumbnails
+    parser.add_argument(
+        '--thumbnail_location',
+        metavar='LOCATION',
+        choices=[loc.name.lower() for loc in ThumbLocation],
+        default=SUPPRESS,
+        help="The location in which to store thumbnail previews of photos. "
+             "If using \"custom\", you must specify a path via "
+             "--thumbnail_path. Defaults to \"root\", which stores thumbnails "
+             "in a directory in the project root."
+    )
+
+    # The name of the thumbnail director(y/ies)
+    parser.add_argument(
+        '--thumbnail_path',
+        metavar='NAME',
+        type=str,
+        default=SUPPRESS,
+        help="The name for the directory containing thumbnails. Or, if "
+             "the location is CUSTOM, this is the full path to the thumbnail "
+             "directory. Defaults to \"thumb\"."
+    )
+
+    # Whether to use builtin/embedded thumbnails in raw photos when available
+    parser.add_argument(
+        '--use_embedded_thumbnail',
+        action='store_true',
+        help="When generating thumbnails, use the builtin/embedded preview "
+             "in the raw file when available."
+    )
+
+    # A factor from 0 to 1 used to optionally shrink photo thumbnails
+    parser.add_argument(
+        '--thumbnail_resize_factor',
+        metavar='FACTOR',
+        type=float,
+        default=SUPPRESS,
+        help="A factor from 0 to 1 to optionally shrink photo thumbnails to "
+             "conserve disk space. Defaults to 1."
+    )
+
+    # JPEG quality for thumbnails
+    parser.add_argument(
+        '--thumbnail_quality',
+        metavar='QUALITY',
+        type=int,
+        default=SUPPRESS,
+        help="The JPEG quality to use when saving thumbnails (0 to 100). "
+             "Defaults to 75."
     )
 
     return parser
