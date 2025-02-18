@@ -261,6 +261,15 @@ class PhotoMetadata:
             Lens.max_aperture_max_focal == self.lens_max_aperture_max_focal,
             Lens.effective_max_aperture == self.lens_effective_max_aperture
         ))
+    
+    def camera_str(self) -> str:
+        """
+        Get a string with the camera make and model.
+        
+        :return: The camera make and model.
+        """
+
+        return f'{self.camera_make} {self.camera_model}'
 
     def create_camera(self) -> Camera:
         """
@@ -277,6 +286,15 @@ class PhotoMetadata:
             daylight_wb_blue=self.camera_daylight_wb_blue,
             daylight_wb_green2=self.camera_daylight_wb_green2
         )
+    
+    def lens_str(self) -> str:
+        """
+        Get a string with the lens make and model.
+        
+        :return: The lens make and model.
+        """
+
+        return f'{self.lens_make} {self.lens_model}'
 
     def create_lens(self) -> Lens:
         """

@@ -76,7 +76,7 @@ def configure_log(file: PathLike | str | None,
     elif to_file:
         msg = f'console disabled, writing to log file: "{file}"'
     elif to_console:
-        msg = 'writing to console, log file disabled'
+        msg = 'writing to console, log file enabled'
     else:
         msg = 'both console and log file disabled'
 

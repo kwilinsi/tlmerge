@@ -34,7 +34,7 @@ class Preprocessor:
     # avoids a possible memory issue if (a) there are tens of thousands of
     # photos, and (b) a bottleneck somewhere (such as with the database worker)
     # leads to some queues filling up quickly
-    QUEUE_MAX_SIZE: int = 300
+    QUEUE_MAX_SIZE: int = 100
 
     def __init__(self, config: ConfigManager) -> None:
         """
@@ -254,6 +254,9 @@ class Preprocessor:
             while self._enqueue_next_file(session):
                 # Get next metadata from the preprocessing worker pool
                 self._apply_metadata(session)
+            
+            _log.debug('Finished scanning for photos. Now preprocessing '
+                       'any remaining photos in queue')
 
             # Close the worker pool: no more tasks to add
             self._photo_worker_pool.close()
@@ -261,6 +264,8 @@ class Preprocessor:
             # SECOND LOOP: process all remaining metadata records
             while self._apply_metadata(session):
                 pass
+            
+            _log.debug('Finished preprocessing. Performing cleanup...')
         except BaseException as e:
             _log.warning('Preprocessing stopped with '
                          f'{e.__class__.__name__}. Debug info:')
@@ -278,6 +283,8 @@ class Preprocessor:
             # Reraise
             raise
         finally:
+            _log.debug('Closing log progress table and releasing buffer...')
+
             # Close the progress table
             table.close()
 
@@ -285,6 +292,7 @@ class Preprocessor:
             buffer.release()
 
         # Commit db changes
+        _log.debug('Committing db changes...')
         session.commit()
 
         # Log results
@@ -319,7 +327,8 @@ class Preprocessor:
             return False
 
         # This is an identifier string for the file
-        rel_path = str(self.root_cfg.rel_path(file))
+        rel_path: str = str(self.root_cfg.rel_path(file))
+        _log.debug(f'Checking db for "{rel_path}"...')
 
         # Load the photo from the database
         try:
@@ -344,6 +353,7 @@ class Preprocessor:
             raise
 
         # Send the photo to the preprocessing worker pool to load its metadata
+        _log.debug(f'Sending "{rel_path}" preprocessing task to worker...')
         self._photo_worker_pool.add(self._load_metadata, rel_path, file)
 
         return True
@@ -375,10 +385,13 @@ class Preprocessor:
                 not self._metadata_queue.empty()
 
         # Find the photo associated with this metadata
-        db_photo = self._enqueued_photos.pop(metadata.path_str())
+        path_str = metadata.path_str()
+        db_photo = self._enqueued_photos.pop(path_str)
 
         ##################################################
         # Apply the metadata, and flush changes to DB (but don't commit yet)
+
+        _log.debug(f'Applying metadata to db record for {path_str}')
 
         try:
             # Apply the metadata for the photo
@@ -393,12 +406,16 @@ class Preprocessor:
                     db_photo.camera_id = camera_id
                 else:
                     db_photo.camera = metadata.create_camera()
+                    _log.debug('Creating new camera record for '
+                               f'{metadata.camera_str()}')
 
                 # Same for lens
                 if (lens_id := metadata.get_lens_id(session)) is not None:
                     db_photo.lens_id = lens_id
                 else:
                     db_photo.lens = metadata.create_lens()
+                    _log.debug('Creating new lens record for '
+                               f'{metadata.lens_str()}')
 
                 # Add the new Photo record to the session
                 session.add(db_photo)
@@ -421,6 +438,7 @@ class Preprocessor:
                 )
 
             # Flush changes to save them (but don't commit yet)
+            _log.debug(f'Flushing db changes (without committing)...')
             session.flush()
         except SQLAlchemyError as e:
             _log.error('Error creating/updating database record for '
@@ -442,15 +460,20 @@ class Preprocessor:
         :raises LibRawError: If something goes wrong with RawPy/LibRaw.
         """
 
-        _log.debug(f'Loading metadata for {self.root_cfg.rel_path(file)}')
+        path_str = self.root_cfg.rel_path(file)
+        _log.debug(f'Loading metadata for "{path_str}"...')
 
         # Create the metadata data object for storing all the values
         metadata = PhotoMetadata(*file.parts[-3:])
+
+        _log.debug(f'Opening "{path_str}" in RawPy...')
 
         # Open the photo in RawPy (i.e. LibRaw) to get more info. Do this first
         # to make sure it's a valid raw file
         with rawpy.imread(str(file)) as rpy_photo:
             _apply_libraw_metadata(rpy_photo, metadata)
+
+        _log.debug(f'Extracting EXIF from "{path_str}"...')
 
         # Extract and record the EXIF data
         self._exif_worker.extract(file, self.config).record_metadata(metadata)

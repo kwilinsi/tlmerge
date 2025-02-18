@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterable
 from datetime import datetime
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -237,8 +238,19 @@ class ExifWorker:
         This is retained even in the raw version without -n.
         """
 
-        self.exif_raw: ExifToolHelper = ExifToolHelper()  # Default: -G and -n
-        self.exif_fmt: ExifToolHelper = ExifToolHelper(common_args=['-G'])
+        logger_raw = logging.getLogger('exif-def')
+        logger_raw.setLevel(level=logging.WARNING)
+        logger_fmt = logging.getLogger('exif-def')
+        logger_fmt.setLevel(level=logging.WARNING)
+
+        # Default/raw: -G and -n
+        self.exif_raw: ExifToolHelper = ExifToolHelper(logger=logger_raw)
+
+        # Formatted output: Only -G
+        self.exif_fmt: ExifToolHelper = ExifToolHelper(
+            common_args=['-G'],
+            logger=logger_fmt
+        )
 
     def close(self) -> None:
         """

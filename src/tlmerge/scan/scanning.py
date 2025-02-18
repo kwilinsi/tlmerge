@@ -168,7 +168,7 @@ def run_scanner(config: ConfigManager) -> None:
 
     sample, s_random, s_size = config.root.sample_details()
 
-    _log.info(f'Scanning timelapse project "{config.root.project}" '
+    _log.info(f'Scanning timelapse project "{config.root.project()}" '
               '(this may take some time)')
 
     table, pbar = ScanMetrics.def_progress_table(sample_size=s_size)

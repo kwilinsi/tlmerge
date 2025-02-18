@@ -422,6 +422,8 @@ class WorkerPool:
         :raises RuntimeError: If the pool was already started.
         """
 
+        _log.debug(f'Starting worker pool')
+
         with self._lock:
             if self._state != WorkerPoolState.NOT_STARTED:
                 raise RuntimeError(
@@ -452,6 +454,8 @@ class WorkerPool:
          BaseException but not Exception).
         """
 
+        _log.debug(f'Closing worker pool...')
+
         with self._lock:
             if self._state == WorkerPoolState.NOT_STARTED:
                 # Can't close until started
@@ -464,6 +468,9 @@ class WorkerPool:
             # If cancelled with an exception, raise the exception
             if self._exception is not None:
                 raise self._exception
+        
+        _log.debug(f'Successfully closed worker pool')
+
 
     def join(self) -> None:
         """
@@ -474,6 +481,8 @@ class WorkerPool:
 
         :return: None
         """
+
+        _log.debug(f'Joining worker pool (blocking thread)...')
 
         with self._lock:
             if self._state in (WorkerPoolState.NOT_STARTED,
@@ -498,6 +507,9 @@ class WorkerPool:
         if self._exception is not None:
             raise self._exception
 
+        _log.debug(f'Finished blocking while joining on worker pool')
+
+
     def is_finished(self) -> bool:
         """
         Check whether this pool is finished.
@@ -509,6 +521,8 @@ class WorkerPool:
             return self._state == WorkerPoolState.FINISHED
 
     def __enter__(self) -> Self:
+        _log.debug(f'Entering worker pool context manager...')
+
         self.start()
         return self
 
@@ -530,6 +544,8 @@ class WorkerPool:
          BaseException that is not an Exception).
         """
 
+        _log.debug(f'Exiting worker pool context manager. Pool will close')
+
         self.close()
 
         try:
@@ -540,3 +556,5 @@ class WorkerPool:
             if exc_val is not None:
                 raise e from exc_val
             raise e
+
+        _log.debug(f'Exited worker pool context manager')
