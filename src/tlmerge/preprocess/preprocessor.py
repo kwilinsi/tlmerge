@@ -75,6 +75,10 @@ class Preprocessor:
             task_queue_size=self.QUEUE_MAX_SIZE
         )
 
+        # This is a counter for tracking the number of consecutive times
+        # _apply_metadata() has timed out for the purposes of logging warnings
+        self._consecutive_metadata_queue_timeouts: int = 0
+
         # Summary statistics
         self._metrics: PreprocessingMetrics | None = None
 
@@ -254,7 +258,7 @@ class Preprocessor:
             while self._enqueue_next_file(session):
                 # Get next metadata from the preprocessing worker pool
                 self._apply_metadata(session)
-            
+
             _log.debug('Finished scanning for photos. Now preprocessing '
                        'any remaining photos in queue')
 
@@ -264,7 +268,7 @@ class Preprocessor:
             # SECOND LOOP: process all remaining metadata records
             while self._apply_metadata(session):
                 pass
-            
+
             _log.debug('Finished preprocessing. Performing cleanup...')
         except BaseException as e:
             _log.warning('Preprocessing stopped with '
@@ -358,7 +362,9 @@ class Preprocessor:
 
         return True
 
-    def _apply_metadata(self, session: Session) -> bool:
+    def _apply_metadata(self,
+                        session: Session,
+                        timeout: float = 0.1) -> bool:
         """
         Get the next PhotoMetadata record from the preprocessing workers. Apply
         any changes to the corresponding database record, and flush those
@@ -367,22 +373,70 @@ class Preprocessor:
         If the metadata queue is empty, do nothing.
 
         :param session: The current database session.
-        :return: False if and only if the worker pool finished, and there are no
-         more metadata records to process.
+        :param timeout: The number of seconds to block while waiting to get
+         a value from the queue. Defaults to 0.1.
+        :return: False if and only if (a) the worker pool finished and (b)
+         there are no more metadata records to process.
         """
 
         # Get the next metadata record from the worker pool
         try:
-            metadata: PhotoMetadata = self._metadata_queue.get(timeout=0.1)
+            metadata: PhotoMetadata = self._metadata_queue.get(timeout=timeout)
         except Empty:
-            # Return False (the "done" signal) only if the worker pool
-            # finished, and the queue is indeed empty. Re-checking empty() here
-            # after getting an Empty exception in case there's a race condition
-            # where the last metadata record was just added. It's probably
-            # important that the empty() check comes second in this boolean
-            # after pool is_finished().
-            return not self._photo_worker_pool.is_finished() or \
-                not self._metadata_queue.empty()
+            # We're done when the worker pool is finished (meaning the workers
+            # are done getting metadata from photos) *AND* the queue is totally
+            # empty, meaning this main thread has finished saving changes to
+            # the database. It's probably important that the empty() check
+            # comes second in this boolean after is_finished(). Re-checking
+            # empty() here after getting an Empty exception might mitigate a
+            # race condition where the last metadata record was just added
+            # after the get() call timed out.
+            if self._photo_worker_pool.is_finished() and \
+                    self._metadata_queue.empty():
+                # If done, return False (the "done" signal)
+                return False
+
+            # Update the counter of consecutive timeouts
+            self._consecutive_metadata_queue_timeouts = \
+                t = self._consecutive_metadata_queue_timeouts + 1
+
+            # If we've hit 10 seconds of consecutive timeout, log a warning
+            # (making sure to only do this once). Do the same at 30 seconds,
+            # and log additional debug info at 1, 2, 3, and 4 minutes. After 5
+            # minutes, raise an error.
+            if 0 <= t * timeout - 10 < timeout:
+                _log.warning(f'Preprocessor main thread timed out {t} times '
+                             f'({t * timeout:.1f} seconds) while waiting for '
+                             'the next photo from the metadata queue')
+            elif 0 <= t * timeout - 30 < timeout:
+                _log.warning(f'Preprocessor main thread timed out {t} times '
+                             f'({t * timeout:.1f} seconds) while waiting for '
+                             'the next photo from the metadata queue')
+            elif 0 <= t * timeout - 300 < timeout:
+                # Exit after 5 minutes of timeouts
+                raise RuntimeError(
+                    "Forcibly terminating after preprocessor main thread "
+                    f"stalled for {t * timeout:.1f} seconds while waiting on "
+                    "the metadata queue"
+                )
+            elif t * timeout >= 60 and (t * timeout) % 60 < timeout:
+                q = self._metadata_queue.qsize()
+                if q == 0:
+                    q = 'empty'
+                else:
+                    q = f"contains ~{q} record{'' if q == 1 else 's'}"
+
+                _log.warning(
+                    "Preprocessor main thread still timed out after "
+                    f"{t * timeout:.1f} seconds. Worker pool "
+                    f"{self._photo_worker_pool.progress_str()}; queue {q}"
+                )
+
+            # Continue without "done" signal
+            return True
+
+        # Got a value. Reset the timeout counter to 0
+        self._consecutive_metadata_queue_timeouts = 0
 
         # Find the photo associated with this metadata
         path_str = metadata.path_str()

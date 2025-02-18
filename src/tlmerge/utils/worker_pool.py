@@ -239,7 +239,26 @@ class WorkerPool:
                                        "after it's finished")
 
         # Add the task to the queue
+        i = 0
+        # TODO add counter here to track and log timeouts
         while True:
+            # Track the number of iterations. If this takes a while, log
+            # warning messages
+            if i == 5:
+                _log.warning(f'Delayed {i} seconds while attempting to add '
+                             f'task "{identifier_text}" to worker pool')
+            elif i == 20 or i == 60:
+                _log.warning(
+                    'Worker pool running abnormally slow. Adding task '
+                    f'"{identifier_text}" has stalled for {i} seconds'
+                )
+            elif i == 300:
+                raise RuntimeError(
+                    f'Request to add new task "{identifier_text}" to worker '
+                    f'pool timed out after 5 minutes. The task queue is full.'
+                )
+
+            # Attempt to add this task
             try:
                 self._tasks.put((task, identifier_text, args), timeout=1)
                 break
@@ -249,6 +268,7 @@ class WorkerPool:
                 with self._lock:
                     if self._state == WorkerPoolState.RUNNING:
                         # Still running; keep trying to add to queue
+                        i += 1
                         continue
                     elif self._state == WorkerPoolState.FINISHED:
                         if self._exception is not None:
@@ -414,6 +434,56 @@ class WorkerPool:
                 _log.warning(f"{t} task{'' if t == 1 else 's'} "
                              "in worker pool not finished")
 
+    def tasks(self) -> int:
+        """
+        Get the APPROXIMATE number of tasks currently enqueued.
+
+        This uses `qsize()`, which is unreliable in that sense that the number
+        of tasks may have changed by the time this method returns. See
+        https://stackoverflow.com/q/1301416/10034073.
+
+        :return: The approximate number of tasks.
+        """
+
+        return self._tasks.qsize()
+
+    def current_workers(self) -> int:
+        """
+        Get the current number of worker threads.
+
+        :return: The current number of workers.
+        """
+
+        with self._lock:
+            return len(self._workers)
+
+    def progress_str(self) -> str:
+        """
+        Get a string that summarizes the execution progress of this worker pool.
+        This will be one of the following strings:
+
+        - "not started"
+        - "finished"
+        - "running (<x> active workers and <y> enqueued tasks)"
+        - "closed (<x> active workers and <y> enqueued tasks)"
+        - "cancelling (<x> active workers and <y> enqueued tasks)"
+
+        :return: A string summarizing what's going on with this worker pool.
+        """
+
+        with self._lock:
+            if self._state == WorkerPoolState.NOT_STARTED:
+                return "not started"
+            elif self._state == WorkerPoolState.FINISHED:
+                return "finished"
+            else:
+                w, q = len(self._workers), self._tasks.qsize()
+                return (
+                        self._state.name.lower() +
+                        f" ({w} active worker{'' if w == 1 else 's'} and "
+                        f"~{q} enqueued task{'' if q == 1 else 's'})"
+                )
+
     def start(self) -> None:
         """
         Start this pool. It will now accept tasks via add().
@@ -468,9 +538,8 @@ class WorkerPool:
             # If cancelled with an exception, raise the exception
             if self._exception is not None:
                 raise self._exception
-        
-        _log.debug(f'Successfully closed worker pool')
 
+        _log.debug(f'Successfully closed worker pool')
 
     def join(self) -> None:
         """
@@ -508,7 +577,6 @@ class WorkerPool:
             raise self._exception
 
         _log.debug(f'Finished blocking while joining on worker pool')
-
 
     def is_finished(self) -> bool:
         """
