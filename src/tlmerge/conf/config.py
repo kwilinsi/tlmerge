@@ -308,6 +308,26 @@ def str_lower_trim(v: Any) -> Any:
         return v
 
 
+def coerce_int(v: Any) -> Any:
+    """
+    Attempt to convert the given value to an integer. This is done by converting
+    it via `float()` if possible and then via `int()` if that wouldn't change
+    the value. For example, the string `"102.0"` would be converted to the
+    integer `102`, but a datetime object and `"0.01"` would be left unchanged.
+
+    :param v: The value, which may be anything.
+    :return: The input value as an int if possible, otherwise unchanged.
+    """
+
+    try:
+        f = float(v)
+        i = int(f)
+        if f == i:
+            return i
+    except ValueError:
+        return v
+
+
 # noinspection PyAttributeOutsideInit
 class BaseConfig(ABC):
     """
@@ -656,18 +676,18 @@ class BaseConfig(ABC):
     @validate_call(config=MAIN_PYDANTIC_CONFIG)
     def set_flip_rotate(
             self,
-            fr: Annotated[FlipRotate | Literal['90'] | Literal['180'] |
-                          Literal['270'],
+            fr: Annotated[FlipRotate | Literal[90, 180, 270],
             BeforeValidator(str_lower_trim),
-            BeforeValidator(blank_str_none)] = FlipRotate.DEFAULT,
+            BeforeValidator(blank_str_none),
+            BeforeValidator(coerce_int)] = FlipRotate.DEFAULT,
             /) -> Self:
 
         # Convert degree amounts to rotation
-        if fr == '90':
+        if fr == 90:
             fr = FlipRotate.ROTATE_CW
-        elif fr == '180':
+        elif fr == 180:
             fr = FlipRotate.HALF_ROTATION
-        elif fr == '270':
+        elif fr == 270:
             fr = FlipRotate.ROTATE_CCW
 
         self._flip_rotate = fr
