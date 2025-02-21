@@ -135,8 +135,8 @@ def _add_file_handler(root: Logger, file: Path) -> None:
     # Add file handler to root
     file_handler = RotatingFileHandler(
         file,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=5,
+        maxBytes=8 * 1024 * 1024,  # 8 MB
+        backupCount=10,
         encoding='utf-8'
     )
 
