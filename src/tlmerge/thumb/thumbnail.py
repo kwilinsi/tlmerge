@@ -1,12 +1,13 @@
 import logging
 from pathlib import Path
+import time
 
 import imageio.v3 as iio
 from PIL import Image
 import rawpy
 # noinspection PyUnresolvedReferences
-from rawpy import (LibRawError, LibRawNoThumbnailError,
-                   LibRawUnsupportedThumbnailError, RawPy, ThumbFormat)
+from rawpy import (LibRawNoThumbnailError, LibRawUnsupportedThumbnailError,
+                   ThumbFormat)
 
 from tlmerge import scan
 from tlmerge.conf import ConfigManager, GroupConfig
@@ -37,7 +38,7 @@ def generate_thumbnails(config: ConfigManager,
     )
 
     n_workers = root.workers()
-    if n_workers > s_size:
+    if n_workers > s_size > 0:
         _log.debug(f"Using {s_size} worker{'' if s_size == 1 else 's'} (extra "
                    f"{s_size - n_workers} not needed as the sample size is "
                    f"only {s_size})")
@@ -53,18 +54,35 @@ def generate_thumbnails(config: ConfigManager,
 
     worker_pool.start()
 
+    # Track any fatal error
+    error = None
+
+    # Record the time it takes
+    start_time = time.time()
+
     try:
         # Send all thumbnail tasks to worker pool
         photos = _enqueue_thumbnail_tasks(config, worker_pool)
-    except Exception:
+    except Exception as e:
+        error = e
         # If there's an error enqueuing, log it
         _log.error("Fatal error while generating thumbnails", exc_info=True)
         return
+    except BaseException as e:
+        error = e
+        raise
     finally:
         # Clean up the worker pool, waiting for all threads to finish
         try:
-            worker_pool.close()
-            worker_pool.join()
+            if error is not None:
+                _log.warning(f'Interrupted ({error.__class__.__name__}): '
+                             'Cleaning up and terminating...')
+
+            worker_pool.close(clear_tasks=error is not None)
+            worker_pool.join(diagnostics=error is not None)
+
+            if error is not None:
+                _log.info('Terminated')
         except BaseException:
             # If workers failed, log the errors here. Note that this is
             # separate from the logging line above, as it's possible to log two
@@ -75,9 +93,28 @@ def generate_thumbnails(config: ConfigManager,
             )
             return
 
-    # Success
-    _log.info(f"Finished generating thumbnails for {photos} "
-              f"photo{'' if photos == 1 else 's'}")
+    # Calculate the elapsed time and photos per second rate
+    delta = start_time - time.time()
+    rate = photos / delta
+    if delta < 60:
+        delta = f"{delta:.2g} second{'' if delta == 1 else 's'}"
+    elif delta < 30 * 60:
+        m, s = delta // 60, round(delta % 60)
+        delta = (f"{m} minute{'' if m == 1 else 's'} "
+                 f"{s} second{'' if s == 1 else 's'}")
+    elif delta < 60 * 60:
+        m = round(delta / 60)
+        delta = f"{m} minute{'' if m == 1 else 's'}"
+    else:
+        h, m = delta // 3600, round(delta % 3600 / 60)
+        delta = (f"{h} hour{'' if h == 1 else 's'} "
+                 f"{m} minute{'' if m == 1 else 's'}")
+
+    # Log success and speed info
+    _log.info(f"Saved thumbnails for {photos} "
+              f"photo{'' if photos == 1 else 's'} in {delta} "
+              f"with {n_workers} worker{'' if n_workers == 1 else 's'} "
+              f"({rate:.2g} photos/second)")
 
 
 def _enqueue_thumbnail_tasks(config: ConfigManager,
@@ -156,6 +193,12 @@ def save_thumbnail(source: Path,
     # Determine whether to use the embedded thumbnail
     use_embedded_thumb = config.use_embedded_thumbnail()
 
+    rel_path = str(Path(*source.parts[-3:]))
+    _log.debug(f'Getting thumbnail for {rel_path} '
+               f'(embedded={use_embedded_thumb})...')
+
+    result_str: str
+
     # Open the photo in RawPy (i.e. LibRaw) to get the thumbnail
     with rawpy.imread(str(source)) as rpy_photo:
         thumb = None
@@ -167,20 +210,24 @@ def save_thumbnail(source: Path,
                 embed = rpy_photo.extract_thumb()
                 if embed.format == ThumbFormat.JPEG:
                     thumb = Image.fromarray(iio.imread(embed.data))
+                    result_str = 'embedded JPEG thumbnail'
                 elif embed.format == ThumbFormat.BITMAP:
                     thumb = Image.fromarray(embed.data)
+                    result_str = 'embedded BITMAP thumbnail'
                 else:
                     _log.debug(
-                        f'Embedded thumbnail {embed} is invalid for {source}'
+                        f'Embedded thumbnail {embed} is invalid for {rel_path}'
                     )
             except (LibRawNoThumbnailError, LibRawUnsupportedThumbnailError):
-                _log.debug(f'No embedded thumbnail available for {source}')
+                _log.debug(f'No embedded thumbnail available for {rel_path}')
 
         if thumb is None:
             thumb: Image = Image.fromarray(postprocess(rpy_photo, config))
+            result_str = 'thumbnail from processed raw'
 
     # If down-sampling the thumbnail, do that
     resize_factor = config.thumbnail_resize_factor()
+    result_str += f' at {resize_factor*100:.3g}% scale'
     if resize_factor < 1:
         thumb = thumb.resize(
             (int(thumb.width * resize_factor),
@@ -188,5 +235,11 @@ def save_thumbnail(source: Path,
             Image.Resampling.LANCZOS
         )
 
+    # Get jpeg quality
+    quality = config.thumbnail_quality()
+
+    # Log info about the thumbnail
+    _log.debug(f'Saving {rel_path} {result_str} and {quality}% quality...')
+
     # Save the thumbnail with the specified quality
-    thumb.save(destination, format='JPEG', quality=config.thumbnail_quality())
+    thumb.save(destination, format='JPEG', quality=quality)
