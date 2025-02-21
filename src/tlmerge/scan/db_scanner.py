@@ -21,7 +21,9 @@ def iter_photo_records_from_db(
      subset of the photos).
     """
 
-    sample, s_random, s_size = config.root.sample_details()
+    # Check whether to only scan a sample
+    root_cfg = config.root
+    sample, s_random, s_size = root_cfg.sample_details()
 
     # This is the base SQLAlchemy query to load photo records
     stmt = select(Photo.date, Photo.group, Photo.file_name)
@@ -48,9 +50,30 @@ def iter_photo_records_from_db(
         if sample:
             stmt = stmt.limit(s_size)
 
+    # Get the excluded dates
+    exclude_dates = root_cfg.exclude_dates() - root_cfg.include_dates()
+
     # Execute the query, and yield the results
     with DB.session() as session:
-        yield from session.execute(stmt)
+        for dt, grp, file in session.execute(stmt):
+            # Ignore excluded dates
+            if dt in exclude_dates:
+                continue
+
+            # Ignore exluded groups
+            dt_cfg = config[dt]
+            if grp in dt_cfg.exclude_groups() and \
+                    file not in dt_cfg.include_groups():
+                continue
+
+            # Ignore excluded photos
+            grp_cfg = config[dt, grp]
+            if file in grp_cfg.exclude_photos() and \
+                    file not in grp_cfg.include_photos():
+                continue
+
+            # Yield this photo file, now that we know it's not excluded
+            yield dt, grp, file
 
 
 def iter_photo_paths_from_db(
