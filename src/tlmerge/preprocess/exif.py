@@ -9,6 +9,8 @@ from exiftool import ExifToolHelper
 from tlmerge.conf import ConfigManager, RootConfig
 from .metadata import PhotoMetadata
 
+_log = logging.getLogger(__name__)
+
 
 def parse_date_time(dt_string: str,
                     formats: Iterable[str] = (
@@ -238,6 +240,8 @@ class ExifWorker:
         This is retained even in the raw version without -n.
         """
 
+        _log.debug('Initializing ExifWorker...')
+
         logger_raw = logging.getLogger('exif-def')
         logger_raw.setLevel(level=logging.WARNING)
         logger_fmt = logging.getLogger('exif-def')
@@ -259,6 +263,8 @@ class ExifWorker:
 
         :return: None
         """
+
+        _log.debug('Closing ExifWorker...')
 
         self.exif_raw.terminate()
         self.exif_fmt.terminate()
@@ -287,6 +293,8 @@ class ExifWorker:
         # Start ExifTool in case not yet running
         self.exif_raw.run()
         self.exif_fmt.run()
+
+        _log.debug('ExifTool running; extracting metadata...')
 
         return ExifData(
             config,

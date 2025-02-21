@@ -240,7 +240,6 @@ class WorkerPool:
 
         # Add the task to the queue
         i = 0
-        # TODO add counter here to track and log timeouts
         while True:
             # Track the number of iterations. If this takes a while, log
             # warning messages
@@ -300,6 +299,8 @@ class WorkerPool:
         :return: None
         """
 
+        _log.debug('Started new worker')
+
         try:
             while True:
                 # If the pool is cancelling, stop this worker
@@ -312,6 +313,7 @@ class WorkerPool:
                     task, identifier, args = self._tasks.get_nowait()
                 except Empty:
                     # Stop this worker, as there's nothing left in the queue
+                    _log.debug('Task queue empty: removing this worker...')
                     return
 
                 # Run it
@@ -333,6 +335,8 @@ class WorkerPool:
                     if self._state == WorkerPoolState.CLOSED and \
                             len(self._workers) == 0:
                         self._state = WorkerPoolState.FINISHED
+
+                _log.debug('Finished removing this worker')
 
     def _run_task(self,
                   task: Callable[..., Any],
@@ -400,6 +404,8 @@ class WorkerPool:
 
         # Wait for all worker threads to finish by repeatedly joining the
         # first one until they're all finished
+        _log.debug('Cancelling: waiting for other workers to finish '
+                   'before recording error(s)...')
         cur_thread = current_thread()
         i = 0
         while True:
@@ -464,9 +470,9 @@ class WorkerPool:
 
         - "not started"
         - "finished"
-        - "running (<x> active workers and <y> enqueued tasks)"
-        - "closed (<x> active workers and <y> enqueued tasks)"
-        - "cancelling (<x> active workers and <y> enqueued tasks)"
+        - "running ([x] active workers and [y] enqueued tasks)"
+        - "closed ([x] active workers and [y] enqueued tasks)"
+        - "cancelling ([x] active workers and [y] enqueued tasks)"
 
         :return: A string summarizing what's going on with this worker pool.
         """
@@ -504,7 +510,7 @@ class WorkerPool:
             # Set the state to running; it now accepts tasks
             self._state = WorkerPoolState.RUNNING
 
-    def close(self) -> None:
+    def close(self, clear_tasks: bool = False) -> None:
         """
         Close this pool. It will no longer accept new tasks, but it will
         continue running until all existing tasks are finished.
@@ -513,6 +519,9 @@ class WorkerPool:
         effect. However, if it cancelled due to one or more exceptions, that
         exception (or exception group) is raised here.
 
+        :param clear_tasks: Whether to remove all enqueued tasks (useful if
+         closing due to a fatal error). Note that this does not affect
+         workers currently processing a task. Defaults to False.
         :return: None
         :raises RuntimeError: If the pool state is NOT_STARTED.
         :raises WorkerPoolExceptionGroup: If the pool was cancelled due to one
@@ -538,20 +547,31 @@ class WorkerPool:
             # If cancelled with an exception, raise the exception
             if self._exception is not None:
                 raise self._exception
+        
+        # Clear remaining tasks if enabled
+        if clear_tasks:
+            _log.debug(f'Clearing remaining tasks (~{self._tasks.qsize()})...')
+            with self._tasks.mutex:
+                self._tasks.queue.clear()
 
         _log.debug(f'Successfully closed worker pool')
 
-    def join(self) -> None:
+    def join(self, diagnostics: bool = False) -> None:
         """
         Block the calling thread until all the workers finish. If they finish
         due to one or more exceptions, they are raised.
 
         You cannot join the pool until after closing it to reject new tasks.
-
+        
+        :param diagnostics: Whether to log some diagnostic info about the
+         number of remaining tasks. Defaults to False.
         :return: None
         """
 
         _log.debug(f'Joining worker pool (blocking thread)...')
+
+        if diagnostics:
+            _log.info(f'Waiting on worker pool: {self.progress_str()}')
 
         with self._lock:
             if self._state in (WorkerPoolState.NOT_STARTED,

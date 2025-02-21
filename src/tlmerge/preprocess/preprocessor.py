@@ -404,20 +404,30 @@ class Preprocessor:
             # (making sure to only do this once). Do the same at 30 seconds,
             # and log additional debug info at 1, 2, 3, and 4 minutes. After 5
             # minutes, raise an error.
-            if 0 <= t * timeout - 10 < timeout:
-                _log.warning(f'Preprocessor main thread timed out {t} times '
-                             f'({t * timeout:.1f} seconds) while waiting for '
-                             'the next photo from the metadata queue')
-            elif 0 <= t * timeout - 30 < timeout:
-                _log.warning(f'Preprocessor main thread timed out {t} times '
-                             f'({t * timeout:.1f} seconds) while waiting for '
-                             'the next photo from the metadata queue')
+            if 0 <= t * timeout - 10 < timeout or 0 <= t * timeout - 30 < timeout:
+                _log.warning(
+                    f'Preprocessor main thread stalled {t * timeout:.1f} '
+                    f'seconds ({t} iterations) while waiting for the next '
+                    'photo from the metadata queue'
+                )
             elif 0 <= t * timeout - 300 < timeout:
-                # Exit after 5 minutes of timeouts
+                # Exit after 5 minutes of timeouts. Include a list of the remaining
+                # enqueued photos in the error message
+                photos = list(self._enqueued_photos.keys())
+                p = len(photos)
+                if p == 0:
+                    p_str = '0 enqueued photos remain'
+                else:
+                    photos = photos[:10]
+                    p_str = (
+                        f"{p} enqueued photo{'' if p == 1 else 's'} remain: "
+                        f"{', '.join(photos)}{', ...' if p > 10 else ''}"
+                    )
+
                 raise RuntimeError(
                     "Forcibly terminating after preprocessor main thread "
                     f"stalled for {t * timeout:.1f} seconds while waiting on "
-                    "the metadata queue"
+                    f"the metadata queue; {p_str}"
                 )
             elif t * timeout >= 60 and (t * timeout) % 60 < timeout:
                 q = self._metadata_queue.qsize()
@@ -427,7 +437,7 @@ class Preprocessor:
                     q = f"contains ~{q} record{'' if q == 1 else 's'}"
 
                 _log.warning(
-                    "Preprocessor main thread still timed out after "
+                    "Preprocessor main thread remains stalled after "
                     f"{t * timeout:.1f} seconds. Worker pool "
                     f"{self._photo_worker_pool.progress_str()}; queue {q}"
                 )
@@ -520,16 +530,14 @@ class Preprocessor:
         # Create the metadata data object for storing all the values
         metadata = PhotoMetadata(*file.parts[-3:])
 
-        _log.debug(f'Opening "{path_str}" in RawPy...')
-
         # Open the photo in RawPy (i.e. LibRaw) to get more info. Do this first
         # to make sure it's a valid raw file
+        _log.debug(f'"{path_str}" in RawPy...')
         with rawpy.imread(str(file)) as rpy_photo:
             _apply_libraw_metadata(rpy_photo, metadata)
 
-        _log.debug(f'Extracting EXIF from "{path_str}"...')
-
         # Extract and record the EXIF data
+        _log.debug(f'Extracting EXIF from "{path_str}"...')
         self._exif_worker.extract(file, self.config).record_metadata(metadata)
 
         # Return the complete metadata object
