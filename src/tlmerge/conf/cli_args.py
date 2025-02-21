@@ -290,9 +290,10 @@ def _build_parser() -> ArgumentParser:
     # Whether to use builtin/embedded thumbnails in raw photos when available
     parser.add_argument(
         '--use_embedded_thumbnail',
-        action='store_true',
+        type=bool,
+        default=SUPPRESS,
         help="When generating thumbnails, use the builtin/embedded preview "
-             "in the raw file when available."
+             "in the raw file when available. Defaults to True."
     )
 
     # A factor from 0 to 1 used to optionally shrink photo thumbnails

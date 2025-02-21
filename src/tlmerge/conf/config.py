@@ -324,7 +324,7 @@ def coerce_int(v: Any) -> Any:
         i = int(f)
         if f == i:
             return i
-    except ValueError:
+    except (TypeError, ValueError):
         return v
 
 
